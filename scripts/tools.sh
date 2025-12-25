@@ -432,53 +432,53 @@ show_summary() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # Check installed software
-    command -v brave-browser &> /dev/null && echo -e "${GREEN}✓${NC} Brave Browser" || echo -e "${RED}✗${NC} Brave Browser"
-    command -v gh &> /dev/null && echo -e "${GREEN}✓${NC} GitHub CLI" || echo -e "${RED}✗${NC} GitHub CLI"
-    command -v az &> /dev/null && echo -e "${GREEN}✓${NC} Azure CLI" || echo -e "${RED}✗${NC} Azure CLI"
+    command -v brave-browser &> /dev/null && echo -e "${GREEN}[OK]${NC} Brave Browser" || echo -e "${RED}[MISSING]${NC} Brave Browser"
+    command -v gh &> /dev/null && echo -e "${GREEN}[OK]${NC} GitHub CLI" || echo -e "${RED}[MISSING]${NC} GitHub CLI"
+    command -v az &> /dev/null && echo -e "${GREEN}[OK]${NC} Azure CLI" || echo -e "${RED}[MISSING]${NC} Azure CLI"
 
     # Check Rust/Cargo
     if [[ -f "$HOME/.cargo/env" ]]; then
         source "$HOME/.cargo/env"
     fi
-    command -v cargo &> /dev/null && echo -e "${GREEN}✓${NC} Rust/Cargo" || echo -e "${RED}✗${NC} Rust/Cargo"
-    command -v go &> /dev/null && echo -e "${GREEN}✓${NC} Go" || echo -e "${RED}✗${NC} Go"
-    command -v python3 &> /dev/null && echo -e "${GREEN}✓${NC} Python3" || echo -e "${RED}✗${NC} Python3"
-    command -v pip3 &> /dev/null && echo -e "${GREEN}✓${NC} pip3" || echo -e "${RED}✗${NC} pip3"
-    command -v node &> /dev/null && echo -e "${GREEN}✓${NC} Node.js" || echo -e "${RED}✗${NC} Node.js"
-    command -v npm &> /dev/null && echo -e "${GREEN}✓${NC} npm" || echo -e "${RED}✗${NC} npm"
+    command -v cargo &> /dev/null && echo -e "${GREEN}[OK]${NC} Rust/Cargo" || echo -e "${RED}[MISSING]${NC} Rust/Cargo"
+    command -v go &> /dev/null && echo -e "${GREEN}[OK]${NC} Go" || echo -e "${RED}[MISSING]${NC} Go"
+    command -v python3 &> /dev/null && echo -e "${GREEN}[OK]${NC} Python3" || echo -e "${RED}[MISSING]${NC} Python3"
+    command -v pip3 &> /dev/null && echo -e "${GREEN}[OK]${NC} pip3" || echo -e "${RED}[MISSING]${NC} pip3"
+    command -v node &> /dev/null && echo -e "${GREEN}[OK]${NC} Node.js" || echo -e "${RED}[MISSING]${NC} Node.js"
+    command -v npm &> /dev/null && echo -e "${GREEN}[OK]${NC} npm" || echo -e "${RED}[MISSING]${NC} npm"
 
     # Check Rust packages (only if Cargo is available)
     if command -v cargo &> /dev/null; then
         local cargo_bin_path="$HOME/.cargo/bin"
-        [[ -f "$cargo_bin_path/eza" ]] && echo -e "${GREEN}✓${NC} eza (modern ls replacement)" || echo -e "${RED}✗${NC} eza"
+        [[ -f "$cargo_bin_path/eza" ]] && echo -e "${GREEN}[OK]${NC} eza (modern ls replacement)" || echo -e "${RED}[MISSING]${NC} eza"
     else
-        echo -e "${RED}✗${NC} eza (Cargo not available)"
+        echo -e "${RED}[MISSING]${NC} eza (Cargo not available)"
     fi
 
     # Check Go tools (only if Go is available)
     if command -v go &> /dev/null; then
         local go_bin_path="$(go env GOPATH 2>/dev/null)/bin"
-        [[ -f "$go_bin_path/hcloud" ]] && echo -e "${GREEN}✓${NC} Hetzner Cloud CLI" || echo -e "${RED}✗${NC} Hetzner Cloud CLI"
-        [[ -f "$go_bin_path/go-blueprint" ]] && echo -e "${GREEN}✓${NC} Go Blueprint" || echo -e "${RED}✗${NC} Go Blueprint"
-        [[ -f "$go_bin_path/gdu" ]] && echo -e "${GREEN}✓${NC} GDU (disk usage analyzer)" || echo -e "${RED}✗${NC} GDU (disk usage analyzer)"
+        [[ -f "$go_bin_path/hcloud" ]] && echo -e "${GREEN}[OK]${NC} Hetzner Cloud CLI" || echo -e "${RED}[MISSING]${NC} Hetzner Cloud CLI"
+        [[ -f "$go_bin_path/go-blueprint" ]] && echo -e "${GREEN}[OK]${NC} Go Blueprint" || echo -e "${RED}[MISSING]${NC} Go Blueprint"
+        [[ -f "$go_bin_path/gdu" ]] && echo -e "${GREEN}[OK]${NC} GDU (disk usage analyzer)" || echo -e "${RED}[MISSING]${NC} GDU (disk usage analyzer)"
     else
-        echo -e "${RED}✗${NC} Hetzner Cloud CLI (Go not available)"
-        echo -e "${RED}✗${NC} Go Blueprint (Go not available)"
-        echo -e "${RED}✗${NC} GDU (Go not available)"
+        echo -e "${RED}[MISSING]${NC} Hetzner Cloud CLI (Go not available)"
+        echo -e "${RED}[MISSING]${NC} Go Blueprint (Go not available)"
+        echo -e "${RED}[MISSING]${NC} GDU (Go not available)"
     fi
 
     # Check Python packages
     if command -v ansible &> /dev/null || [[ -f "$HOME/.local/bin/ansible" ]]; then
-        echo -e "${GREEN}✓${NC} Ansible"
+        echo -e "${GREEN}[OK]${NC} Ansible"
     else
-        echo -e "${RED}✗${NC} Ansible"
+        echo -e "${RED}[MISSING]${NC} Ansible"
     fi
 
     # Check npm packages
     if command -v claude-code &> /dev/null || npm list -g @anthropic-ai/claude-code &> /dev/null; then
-        echo -e "${GREEN}✓${NC} Claude Code CLI"
+        echo -e "${GREEN}[OK]${NC} Claude Code CLI"
     else
-        echo -e "${RED}✗${NC} Claude Code CLI"
+        echo -e "${RED}[MISSING]${NC} Claude Code CLI"
     fi
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
