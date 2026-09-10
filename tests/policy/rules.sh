@@ -73,6 +73,27 @@ load_file_lists() {
   mapfile -t LIBS < <(lib_files)
   mapfile -t BINS < <(cd "$ROOT" && files_in 'install.sh' 'bin/*')
   CORE=(${MODULES[0]+"${MODULES[@]}"} ${LIBS[0]+"${LIBS[@]}"} ${BINS[0]+"${BINS[@]}"})
+
+  # EVERY rule below only ever looks at the files in these three lists, and every
+  # list comes from a glob. A glob that matches nothing expands to nothing and
+  # tells no one: the rules then run to completion over zero files and the script
+  # prints "clean". That is not a hypothetical failure mode — it is exactly how
+  # old-name passed on this branch for its whole life while CI found nine
+  # violations in the same tree. An empty list is a broken run, not a clean one.
+  local empty=''
+  [ "${#MODULES[@]}" -gt 0 ] || empty="$empty modules/[0-9][0-9]-*.sh"
+  [ "${#LIBS[@]}" -gt 0 ] || empty="$empty lib/*.sh"
+  [ "${#BINS[@]}" -gt 0 ] || empty="$empty install.sh|bin/*"
+  if [ -n "$empty" ]; then
+    printf '%s: these globs matched nothing under %s:%s\n' "$PROG" "$ROOT" "$empty" >&2
+    printf 'The rules that read them would examine no file and report "clean".\n' >&2
+    printf 'Refusing to report success on a checkout the rules cannot see.\n' >&2
+    exit 1
+  fi
+
+  # Printed on every run, including --rule: "clean" means nothing without it.
+  printf '%s: %d module(s), %d lib(s), %d executable(s)\n' \
+    "$PROG" "${#MODULES[@]}" "${#LIBS[@]}" "${#BINS[@]}"
   return 0
 }
 
@@ -100,7 +121,14 @@ grep_rule() {
     esac
     if [ ${#text} -gt 140 ]; then text="${text:0:137}..."; fi
     fail "$rule" "$file:$line" "$text"
-  done < <(cd "$ROOT" && grep -nIHE -- "$pat" "$@" 2>/dev/null || true)
+    # An explicit subshell, not `cd && grep || true`: in that form a failed `cd`
+    # falls through to `|| true` and the scan silently examines nothing
+    # (shellcheck SC2015). Here a failed cd exits the subshell and the caller
+    # reads an empty stream deliberately, not by accident.
+  done < <(
+    cd "$ROOT" || exit 0
+    grep -nIHE -- "$pat" "$@" 2>/dev/null || true
+  )
   return 0
 }
 
@@ -339,7 +367,18 @@ rule_pin_defined() {
 }
 
 rule_old_name() {
-  local old='wsl2-config' allow='^(README\.md|docs/migration\.md)$'
+  # Files whose SUBJECT is the old repository. Naming it there is the point, so
+  # they are exempt outright — including in a URL, which is the whole content of
+  # a migration instruction. Anything not on this list may mention the old name
+  # only in a comment, and never in a URL.
+  #   README.md             carries the migration note
+  #   docs/migration.md     is the migration guide: it must show the OLD command
+  #   docs/modules.md       documents the migrate module, in table cells that
+  #                         cannot be shell comments
+  #   modules/92-migrate.sh IS the migrate module — it looks for the old checkout
+  #   tests/policy/rules.sh this rule's own pattern, and its self-test fixture
+  local old='wsl2-config'
+  local allow='^(README\.md|docs/migration\.md|docs/modules\.md|modules/92-migrate\.sh|tests/policy/rules\.sh)$'
   local hit file rest line text
   while IFS= read -r hit; do
     [ -n "$hit" ] || continue
@@ -350,13 +389,16 @@ rule_old_name() {
     case $text in
       *"# policy-allow: old-name"*) continue ;;
     esac
+    # The allow-list is checked FIRST. It used to sit after the URL branch, which
+    # made the exemption useless for exactly the files that need it: docs/
+    # migration.md exists to print the old install URL, and got flagged for it.
+    printf '%s' "$file" | grep -qE "$allow" && continue
     # In a URL or a clone target it is always wrong — that is a pipeline pointing
     # at the repository this one replaced.
     if printf '%s' "$text" | grep -qE "(github(usercontent)?\.com[:/][^\"' ]*|/)${old}(\.git|/|\"|'|$)"; then
       fail old-name "$file:$line" "the old repository name in a URL: ${text#"${text%%[![:space:]]*}"}"
       continue
     fi
-    printf '%s' "$file" | grep -qE "$allow" && continue
     # Elsewhere it may only appear in a comment explaining the migration.
     case ${text#"${text%%[![:space:]]*}"} in
       '#'* | '*'* | '//'*) continue ;;
@@ -365,10 +407,28 @@ rule_old_name() {
       "the old repository name outside README.md / docs/migration.md and outside a comment"
   done < <(
     cd "$ROOT" || exit 0
-    if [ -d .git ] && command -v git >/dev/null 2>&1; then
-      git grep -nIH -- "$old" -- . 2>/dev/null || true
+    # `git rev-parse`, NOT `[ -d .git ]`: in a `git worktree` checkout .git is a
+    # FILE, so -d is false and the rule quietly switches to the fallback below —
+    # the branch nobody runs, which emits `./README.md` where git emits
+    # `README.md`, so the anchored allow-list matches nothing and every exempt
+    # file is reported. Measured in a worktree: 13 findings on a clean tree,
+    # one of them against .git itself. A gate that cries wolf gets switched off,
+    # which is the same outcome as a gate that cannot fire.
+    if command -v git >/dev/null 2>&1 \
+      && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      # --untracked is load-bearing. Plain `git grep` searches TRACKED files
+      # only, so a working tree full of new-but-uncommitted files scans to
+      # nothing and the rule reports "clean". That is not hypothetical: this
+      # whole repository was written as untracked files, every local run passed,
+      # and the rule only fired once CI checked out the commit. --untracked adds
+      # the working tree while still honouring .gitignore.
+      git grep --untracked -nIH -- "$old" -- . 2>/dev/null || true
     else
-      grep -rnIH --exclude-dir=.git -- "$old" . 2>/dev/null || true
+      # No git at all (a release tarball). Emit git's path shape — no leading
+      # `./` — so the allow-list above judges the same strings either way, and
+      # exclude .git whether it is a directory or a worktree's pointer file.
+      grep -rnIH --exclude-dir=.git --exclude=.git -- "$old" . 2>/dev/null \
+        | sed 's|^\./||' || true
     fi
   )
   return 0
@@ -421,6 +481,26 @@ self_test() {
   mkdir -p "$dir/modules" "$dir/lib" "$dir/bin"
 
   printf 'GOOD_VERSION=v1.0.0\n' >"$dir/versions.env"
+
+  # A compliant lib fragment and a compliant executable, created once and kept
+  # for BOTH phases. Without them lib/*.sh and bin/* are empty in one phase or
+  # the other, which is the very condition load_file_lists now refuses — and,
+  # before it refused, the condition under which lib-shape and exec-bit silently
+  # checked nothing.
+  cat >"$dir/lib/good.sh" <<'EOF'
+# shellcheck shell=bash
+# a sourced fragment that breaks no rule
+
+good_helper() { printf 'ok\n'; }
+EOF
+  chmod 0644 "$dir/lib/good.sh"
+
+  cat >"$dir/bin/tool" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'tool\n'
+EOF
+  chmod 0755 "$dir/bin/tool"
 
   # A compliant module that mentions no pin AT ALL, sorting before the bad one.
   # Its only job is to keep `pin-defined` honest: the rule scans the modules in
