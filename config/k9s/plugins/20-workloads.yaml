@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: workloads (dp/sts/ds)
+# linux-devops-tools :: k9s plugins :: workloads (dp/sts/ds)
 # NOTE: k9s already binds <r> Restart, <s> Scale, <i> Set Image, <Shift-J> Jump Owner here.
 plugins:
   stern-workload:

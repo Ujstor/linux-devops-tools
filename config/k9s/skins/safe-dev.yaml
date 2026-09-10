@@ -1,4 +1,4 @@
-# devops-env-config :: k9s skin :: safe-dev
+# linux-devops-tools :: k9s skin :: safe-dev
 # dev / lab - green chrome, safe to break.
 k9s:
   body:

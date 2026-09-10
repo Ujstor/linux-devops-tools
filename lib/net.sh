@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/net.sh — downloads, checksums and GitHub-release installs.
 #
-# devops-env-config :: shared library. Sourced by lib/common.sh only.
+# linux-devops-tools :: shared library. Sourced by lib/common.sh only.
 # SPEC 5.3.6 calls this file `github.sh`; the FUNCTION NAMES below are unchanged.
 # It is named net.sh because it also owns the generic download path, the checksum
 # helpers and `sh_installer_run`, none of which are GitHub-specific.

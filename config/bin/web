@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# web — open a named bookmark (or a URL) through open-url.  devops-env-config
+# web — open a named bookmark (or a URL) through open-url.  linux-devops-tools
 #
 #   web <name>        look <name> up in ~/.config/devops-env/bookmarks
 #   web <url>         open a URL directly

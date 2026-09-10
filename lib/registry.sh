@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/registry.sh — module discovery, plan resolution, execution and the summary.
 #
-# devops-env-config :: shared library. Sourced by lib/common.sh only.
+# linux-devops-tools :: shared library. Sourced by lib/common.sh only.
 #
 # D2: modules are executable CHILD PROCESSES, modules/NN-name.sh, described by
 # `# meta:` comment headers. Order is numeric filename order; there is no dependency

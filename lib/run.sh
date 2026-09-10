@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/run.sh — THE mutation gate, privilege acquisition and confirmation.
 #
-# devops-env-config :: shared library. Sourced by lib/common.sh only.
+# linux-devops-tools :: shared library. Sourced by lib/common.sh only.
 #
 # MUST-FIX S6: every mutation in this repository — apt, dpkg, installs, and every
 # filesystem writer in lib/fs.sh and lib/shell.sh — routes through `run`/`run_sudo`

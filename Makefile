@@ -1,4 +1,4 @@
-# devops-env-config — development targets.
+# linux-devops-tools — development targets.
 #
 # Nothing here is needed to USE this repository; `install.sh` and `bin/devenv`
 # depend on bash, curl, git and coreutils and nothing else. These targets are for
@@ -82,7 +82,7 @@ gate = @test -f '$(1)' || { \
         check bump bump-write clean
 
 help: ## Show this help
-	@printf 'devops-env-config — make targets\n\n'
+	@printf 'linux-devops-tools — make targets\n\n'
 	@grep -hE '^[a-z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) \
 	  | sort \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'

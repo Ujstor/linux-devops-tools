@@ -219,14 +219,16 @@ check_shell() {
     return 0
   fi
 
-  # Our own managed block: exactly one, or something went wrong.
-  n=$(grep -cFx -- "$(block_begin_marker '')" "$rc" 2>/dev/null || true)
-  n=${n:-0}
+  # Our own managed block: exactly one, or something went wrong. The count includes
+  # a block left under the pre-rename tag — it still sources the same loader, so
+  # reporting "no block" for it would send you to re-run a step that then appends a
+  # second one.
+  n=$(count_blocks_in_file "$rc" '')
   case $n in
-    0) warn "shell: ~/.bashrc has no devops-env-config block — run: devenv --only shell" ;;
-    1) ok 'shell: ~/.bashrc has exactly one devops-env-config block' ;;
+    0) warn "shell: ~/.bashrc has no linux-devops-tools block — run: devenv --only shell" ;;
+    1) ok 'shell: ~/.bashrc has exactly one linux-devops-tools block' ;;
     *)
-      fail "shell: ~/.bashrc has $n devops-env-config blocks — the loader runs $n times"
+      fail "shell: ~/.bashrc has $n linux-devops-tools blocks — the loader runs $n times"
       plan 'edit ~/.bashrc by hand and delete the extra block (never automated)'
       ;;
   esac

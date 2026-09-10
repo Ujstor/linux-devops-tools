@@ -1,4 +1,4 @@
-# 001 — devops-env-config: implementation plan
+# 001 — linux-devops-tools: implementation plan
 
 **How.** Every technical decision behind [spec.md](spec.md). Where the build diverged from the
 original design, this plan records **what shipped**, not what was proposed.

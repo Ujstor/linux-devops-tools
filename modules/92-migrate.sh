@@ -34,7 +34,11 @@ source "${DEVENV_HOME:?}/lib/common.sh"
 APPLY=${DEVENV_MIGRATE_APPLY:-0}
 RC="$HOME/.bashrc"
 DROPIN="${DEVENV_DROPIN_DIR:-$HOME/.bashrc.d}"
-MARK='# devops-env-config:migrated'
+MARK='# linux-devops-tools:migrated'
+# The same mark under the project's pre-rename name. Lines commented out by an
+# earlier run carry it, and the transform below must recognise them as already
+# handled — otherwise a second run comments out the comment, once per run.
+MARK_LEGACY='# devops-env-config:migrated'
 FINDINGS=0
 ACTIONABLE=0
 
@@ -125,7 +129,7 @@ BEGIN {
   }
   close(rules)
 }
-index($0, mark) == 1 { print; next }
+index($0, mark) == 1 || index($0, legacy) == 1 { print; next }
 inblock {
   printf "%s (%s): %s\n", mark, blockwhy, $0
   if ($0 ~ /^[[:space:]]*fi[[:space:]]*$/) inblock = 0
@@ -146,7 +150,8 @@ END {
 }
 AWK
 
-  if ! awk -v rules="$rules" -v mark="$MARK" -f "$prog" "$RC" >"$out"; then
+  if ! awk -v rules="$rules" -v mark="$MARK" -v legacy="$MARK_LEGACY" \
+    -f "$prog" "$RC" >"$out"; then
     log_error 'the rewrite hit an unterminated if/fi block — nothing was changed.'
     log_error "comment the legacy lines out by hand; $RC is untouched."
     return 0
@@ -177,9 +182,9 @@ report_bashrc_extras() {
   [ -f "$RC" ] || return 0
   local n
 
-  n=$(grep -cFx -- "$(block_begin_marker '')" "$RC" 2>/dev/null || true)
+  n=$(count_blocks_in_file "$RC" '')
   if [ "${n:-0}" -gt 1 ]; then
-    note "bashrc: $n devops-env-config blocks — the loader runs $n times"
+    note "bashrc: $n linux-devops-tools blocks — the loader runs $n times"
     detail 'this is never fixed automatically: edit ~/.bashrc and delete the extras.'
   fi
 

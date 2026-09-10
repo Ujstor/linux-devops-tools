@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/common.sh — the ONE entry point of the shared library.
 #
-# devops-env-config :: shared library.
+# linux-devops-tools :: shared library.
 #
 #   source "${DEVENV_HOME:?}/lib/common.sh"
 #

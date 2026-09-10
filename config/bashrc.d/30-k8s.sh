@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ~/.bashrc.d/30-k8s.sh — devops-env-config :: kubernetes shell ergonomics.
+# ~/.bashrc.d/30-k8s.sh — linux-devops-tools :: kubernetes shell ergonomics.
 #
 # KUBECONFIG is deliberately NOT merged. With ~40 files in ~/.kube, "the first
 # file to set a value wins", `current-context` comes from whichever file sorted

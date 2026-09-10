@@ -321,7 +321,7 @@ k8sp_report_schema_gen() {
   log_warn "  'schema' (losisin/helm-values-schema-json) is installed as its maintained replacement."
   log_warn "  Migrate the chart Makefiles from 'helm schema-gen values.yaml' to 'helm schema', then:"
   log_warn "      helm plugin uninstall schema-gen"
-  log_warn "  devops-env-config does not remove plugins you installed."
+  log_warn "  linux-devops-tools does not remove plugins you installed."
   return 0
 }
 

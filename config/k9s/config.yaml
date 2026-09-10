@@ -1,4 +1,4 @@
-# devops-env-config :: k9s main config  (~/.config/k9s/config.yaml)
+# linux-devops-tools :: k9s main config  (~/.config/k9s/config.yaml)
 #
 # HOW THIS FILE IS APPLIED (MUST-FIX C4)
 #   k9s OWNS this file: it rewrites it in full every time it exits, so it already

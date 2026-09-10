@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: Rook-Ceph
+# linux-devops-tools :: k9s plugins :: Rook-Ceph
 # Requires: kubectl krew install rook-ceph
 plugins:
   ceph-status:

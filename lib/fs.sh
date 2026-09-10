@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/fs.sh — every filesystem mutation in this repository.
 #
-# devops-env-config :: shared library. Sourced by lib/common.sh only.
+# linux-devops-tools :: shared library. Sourced by lib/common.sh only.
 #
 # MUST-FIX S6: EVERY writer here routes through lib/run.sh. Under --dry-run nothing
 # on disk changes: the function prints "[dry ] write <path> (would change)" and
@@ -26,7 +26,14 @@ _DEVENV_FS=1
 # The one marker tag. Everything that fences a managed region in someone else's
 # file derives from it, so a marker can never drift between the writer, the
 # detector and the uninstaller (idempotency F4).
-DEVENV_TAG='devops-env-config'
+DEVENV_TAG='linux-devops-tools'
+
+# The tag this project used before it was renamed. A box provisioned by any earlier
+# version carries it in ~/.bashrc, in ~/.bashrc.d/* and in the completion cache, so
+# every REMOVER and every "is this ours?" test below accepts it as well. Nothing
+# ever WRITES it: an old block is replaced by a new one, never re-emitted, which is
+# what keeps `devenv --only shell` from leaving two loaders behind.
+DEVENV_TAG_LEGACY='devops-env-config' # policy-allow: old-name
 
 # Set to 1 by every writer below when it changed (or would change) the file, and to 0
 # when it did not. Read by callers such as repo_add's NEED_APT_UPDATE logic; exported
@@ -36,9 +43,16 @@ export DEVENV_CHANGED_LAST
 
 # block_begin_marker [MARKER] / block_end_marker [MARKER]
 #   Print the fence lines for a managed block. MARKER may be empty, which yields
-#   exactly SPEC 6.2's literal "# >>> devops-env-config >>>".
+#   exactly SPEC 6.2's literal "# >>> linux-devops-tools >>>".
 block_begin_marker() { printf '# >>> %s%s >>>\n' "$DEVENV_TAG" "${1:+:$1}"; }
 block_end_marker() { printf '# <<< %s%s <<<\n' "$DEVENV_TAG" "${1:+:$1}"; }
+
+# legacy_block_begin_marker [MARKER] / legacy_block_end_marker [MARKER]
+#   The same fences under the pre-rename tag. READ-ONLY: they exist so a block
+#   written before the rename can still be found, replaced and deleted. Never
+#   print them into a file.
+legacy_block_begin_marker() { printf '# >>> %s%s >>>\n' "$DEVENV_TAG_LEGACY" "${1:+:$1}"; }
+legacy_block_end_marker() { printf '# <<< %s%s <<<\n' "$DEVENV_TAG_LEGACY" "${1:+:$1}"; }
 
 # sha256_of FILE
 #   Prints the file's sha256 hex digest on stdout. Returns 1 when the file cannot
@@ -254,38 +268,65 @@ write_once() {
 }
 
 # has_block_in_file FILE MARKER
-#   Returns 0 when FILE contains the managed block fenced by MARKER.
+#   Returns 0 when FILE contains the managed block fenced by MARKER, under either
+#   the current tag or the pre-rename one — a legacy block is still a live block:
+#   it sources the same loader, and `devenv shell status` must not call it absent.
 #   Read-only predicate; MARKER may be empty for the top-level hook block.
 has_block_in_file() {
   local f=${1:?has_block_in_file: FILE required} marker=${2-}
   [ -f "$f" ] || return 1
-  grep -Fxq -- "$(block_begin_marker "$marker")" "$f"
+  grep -Fxq -e "$(block_begin_marker "$marker")" \
+    -e "$(legacy_block_begin_marker "$marker")" -- "$f"
+}
+
+# count_blocks_in_file FILE [MARKER]
+#   Prints how many opening fences FILE carries, current tag and pre-rename tag
+#   together, so the doctor's "the loader runs N times" count cannot miss one.
+#   Prints 0 when FILE does not exist. Read-only; always returns 0.
+count_blocks_in_file() {
+  local f=${1:?count_blocks_in_file: FILE required} marker=${2-} n
+  n=$(grep -cFx -e "$(block_begin_marker "$marker")" \
+    -e "$(legacy_block_begin_marker "$marker")" -- "$f" 2>/dev/null) || n=0
+  printf '%s\n' "${n:-0}"
 }
 
 # ensure_block_in_file FILE MARKER
 #   Payload on stdin. Renders
-#       # >>> devops-env-config[:MARKER] >>>
+#       # >>> linux-devops-tools[:MARKER] >>>
 #       <payload>
-#       # <<< devops-env-config[:MARKER] <<<
+#       # <<< linux-devops-tools[:MARKER] <<<
 #   and makes FILE contain exactly that block: replacing an existing one in place,
 #   or appending it when absent. Byte-identical on a second run (no backup, no write).
 #   MUST-FIX S4: when FILE is a symlink the block is written THROUGH the link, so
 #   ~/.bashrc -> ~/linuxtoolbox/mybash/.bashrc keeps working and the link survives.
 #   Refuses (returns 1) when FILE has an opening fence and no closing fence, rather
 #   than swallow everything after it.
+#   RENAME: a block left by the pre-rename tag is UPGRADED IN PLACE — consumed where
+#   it sits and re-emitted under the new fences. Matching only the new fence would
+#   append a second block beside the old one and the loader would run twice, which
+#   is the exact failure `devenv doctor` reports and refuses to fix automatically.
 #   Honours --dry-run. Returns 0 on success.
 ensure_block_in_file() {
   local f=${1:?ensure_block_in_file: FILE required} marker=${2-}
-  local body begin end out
+  local body begin end lbegin lend out
   begin=$(block_begin_marker "$marker")
   end=$(block_end_marker "$marker")
+  lbegin=$(legacy_block_begin_marker "$marker")
+  lend=$(legacy_block_end_marker "$marker")
   body=$(devenv_tmpfile) || return 1
   cat >"$body"
 
-  if [ -f "$f" ] && grep -Fxq -- "$begin" "$f" && ! grep -Fxq -- "$end" "$f"; then
-    log_error "$f has an unterminated '$begin' block — refusing to edit it."
-    log_error "Add the matching '$end' line by hand, then re-run."
-    return 1
+  if [ -f "$f" ]; then
+    if grep -Fxq -- "$begin" "$f" && ! grep -Fxq -- "$end" "$f"; then
+      log_error "$f has an unterminated '$begin' block — refusing to edit it."
+      log_error "Add the matching '$end' line by hand, then re-run."
+      return 1
+    fi
+    if grep -Fxq -- "$lbegin" "$f" && ! grep -Fxq -- "$lend" "$f"; then
+      log_error "$f has an unterminated '$lbegin' block — refusing to edit it."
+      log_error "Add the matching '$lend' line by hand, then re-run."
+      return 1
+    fi
   fi
 
   local src=/dev/null mode=0644
@@ -294,12 +335,13 @@ ensure_block_in_file() {
     mode=$(_fs_mode_of "$f")
   fi
   out=$(devenv_tmpfile) || return 1
-  awk -v b="$begin" -v e="$end" -v body="$body" '
+  awk -v b="$begin" -v e="$end" -v lb="$lbegin" -v le="$lend" -v body="$body" '
     BEGIN { while ((getline l < body) > 0) blk = blk l "\n"; close(body) }
-    $0 == b { inblk = 1; seen = 1; printf "%s\n%s%s\n", b, blk, e; next }
-    inblk   { if ($0 == e) inblk = 0; next }
-            { print }
-    END     { if (!seen) printf "%s\n%s%s\n", b, blk, e }
+    $0 == b  { inblk = 1; fence = e;  seen = 1; printf "%s\n%s%s\n", b, blk, e; next }
+    $0 == lb { inblk = 1; fence = le; seen = 1; printf "%s\n%s%s\n", b, blk, e; next }
+    inblk    { if ($0 == fence) inblk = 0; next }
+             { print }
+    END      { if (!seen) printf "%s\n%s%s\n", b, blk, e }
   ' "$src" >"$out" || return 1
 
   write_if_changed "$f" "$mode" <"$out"
@@ -308,18 +350,24 @@ ensure_block_in_file() {
 # remove_block_from_file FILE MARKER
 #   Deletes the managed block fenced by MARKER. Symlink-safe (writes through the
 #   link, never `mv`). No-op when the block is absent. Honours --dry-run. Returns 0.
+#   RENAME: removes a block under the pre-rename tag too. `devenv uninstall` on a
+#   box installed before the rename would otherwise leave its ~/.bashrc sourcing a
+#   loader from a directory it has just deleted — every new shell an error.
 remove_block_from_file() {
   local f=${1:?remove_block_from_file: FILE required} marker=${2-}
-  local begin end out
+  local begin end lbegin lend out
   [ -f "$f" ] || return 0
   begin=$(block_begin_marker "$marker")
   end=$(block_end_marker "$marker")
-  grep -Fxq -- "$begin" "$f" || return 0
+  lbegin=$(legacy_block_begin_marker "$marker")
+  lend=$(legacy_block_end_marker "$marker")
+  grep -Fxq -e "$begin" -e "$lbegin" -- "$f" || return 0
   out=$(devenv_tmpfile) || return 1
-  awk -v b="$begin" -v e="$end" '
-    $0 == b { inblk = 1; next }
-    inblk   { if ($0 == e) inblk = 0; next }
-            { print }
+  awk -v b="$begin" -v e="$end" -v lb="$lbegin" -v le="$lend" '
+    $0 == b  { inblk = 1; fence = e;  next }
+    $0 == lb { inblk = 1; fence = le; next }
+    inblk    { if ($0 == fence) inblk = 0; next }
+             { print }
   ' "$f" >"$out" || return 1
   write_if_changed "$f" "$(_fs_mode_of "$f")" <"$out"
 }
@@ -334,22 +382,28 @@ _fs_mode_of() {
 
 # ensure_line_in_file FILE LINE MARKER
 #   Ensures FILE contains exactly one line
-#       LINE # devops-env-config:MARKER
+#       LINE # linux-devops-tools:MARKER
 #   Matching is on the MARKER SUFFIX, never on the text — that is why the live
 #   ~/.bashrc ended up with both `. cargo/env` and `source cargo/env`.
 #   Replaces a drifted line in place, appends when absent, no-op when identical.
+#   RENAME: a line carrying the pre-rename suffix is the same line, and is replaced
+#   rather than left behind with a second copy appended under the new suffix.
 #   Symlink-safe; honours --dry-run. Returns 0.
 ensure_line_in_file() {
   local f=${1:?ensure_line_in_file: FILE required}
   local line=${2:?ensure_line_in_file: LINE required}
   local marker=${3:?ensure_line_in_file: MARKER required}
-  local tagged suffix out
+  local tagged suffix lsuffix out
   suffix="# ${DEVENV_TAG}:${marker}"
+  lsuffix="# ${DEVENV_TAG_LEGACY}:${marker}"
   tagged="$line $suffix"
   out=$(devenv_tmpfile) || return 1
   if [ -f "$f" ]; then
-    awk -v suf="$suffix" -v want="$tagged" '
-      index($0, suf) && substr($0, length($0) - length(suf) + 1) == suf {
+    awk -v suf="$suffix" -v lsuf="$lsuffix" -v want="$tagged" '
+      function ends_with(s) {
+        return index($0, s) && substr($0, length($0) - length(s) + 1) == s
+      }
+      ends_with(suf) || ends_with(lsuf) {
         if (!done) { print want; done = 1 }
         next
       }
@@ -502,7 +556,7 @@ write_managed() {
         log_warn "keeping your edited $dest (DEVENV_KEEP_LOCAL=1) — shipped version not installed"
         return 0
       fi
-      log_warn "$dest was edited outside devops-env-config; backing it up before overwriting"
+      log_warn "$dest was edited outside linux-devops-tools; backing it up before overwriting"
     fi
   fi
 

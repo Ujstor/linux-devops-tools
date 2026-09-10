@@ -388,7 +388,7 @@ apply_settings() {
   fi
 
   DEVENV_REF=${DEVENV_REF:-main}
-  DEVENV_REPO=${DEVENV_REPO:-Ujstor/devops-env-config}
+  DEVENV_REPO=${DEVENV_REPO:-Ujstor/linux-devops-tools}
   DEVENV_FAIL_FAST=${DEVENV_FAIL_FAST:-0}
   DEVENV_PRUNE=${DEVENV_PRUNE:-0}
   DEVENV_ADOPT_BASHRC=${DEVENV_ADOPT_BASHRC:-0}
@@ -481,7 +481,7 @@ record_plan() {
   esac
   ensure_dir "$DEVENV_STATE" || return 0
   printf '%s\n' \
-    "# devops-env-config — the plan 'devenv update' re-runs. Generated; edit freely." \
+    "# linux-devops-tools — the plan 'devenv update' re-runs. Generated; edit freely." \
     "profile=$DEVENV_PROFILE" \
     "only=$DEVENV_ONLY" \
     "skip=$DEVENV_SKIP" \
@@ -679,7 +679,7 @@ update_tarball_checkout() {
   if [ ! -f "$tmp/repo/lib/common.sh" ] || [ ! -f "$tmp/repo/bin/devenv" ] \
     || [ ! -f "$tmp/repo/versions.env" ]; then
     rm -rf -- "$tmp"
-    log_error "the download does not look like devops-env-config — refusing to install it"
+    log_error "the download does not look like linux-devops-tools — refusing to install it"
     return 1
   fi
   : >"$tmp/repo/.tarball-install"
@@ -803,7 +803,7 @@ cmd_uninstall() {
   log_info "This removes the ~/.bashrc managed block and every file this repository"
   log_info "wrote and still owns byte-for-byte. It does NOT remove packages, binaries"
   log_info "in /usr/local/bin, krew plugins, Go tools or anything you edited yourself."
-  if ! confirm "remove devops-env-config's shell integration and owned files?"; then
+  if ! confirm "remove the linux-devops-tools shell integration and owned files?"; then
     log_info "nothing was changed"
     log_step_end
     return 0

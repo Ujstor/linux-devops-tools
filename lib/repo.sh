@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/repo.sh — third-party apt repositories: keys, deb822 sources, suite resolution.
 #
-# devops-env-config :: shared library. Sourced by lib/common.sh only.
+# linux-devops-tools :: shared library. Sourced by lib/common.sh only.
 #
 # D5/K14: every repo is a deb822 `.sources` file plus an ASCII-ARMORED `.asc` key in
 # /etc/apt/keyrings. apt has accepted armored keys in `Signed-By:` since 1.4 and every
@@ -173,7 +173,7 @@ repo_add() {
   local dest="$SOURCES_DIR/$name.sources" tmp
   tmp=$(devenv_tmpfile) || return 1
   {
-    printf '# Managed by devops-env-config. Local edits are overwritten.\n'
+    printf '# Managed by linux-devops-tools. Local edits are overwritten.\n'
     printf 'Types: deb\n'
     printf 'URIs: %s\n' "$uri"
     printf 'Suites: %s\n' "$suites"
@@ -220,7 +220,7 @@ repo_add_flat() {
   local dest="$SOURCES_DIR/$name.sources" tmp
   tmp=$(devenv_tmpfile) || return 1
   {
-    printf '# Managed by devops-env-config. Local edits are overwritten.\n'
+    printf '# Managed by linux-devops-tools. Local edits are overwritten.\n'
     printf 'Types: deb\n'
     printf 'URIs: %s\n' "$uri"
     printf 'Suites: /\n'

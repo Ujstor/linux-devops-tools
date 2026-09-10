@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ~/.bashrc.d/40-shellui.sh — devops-env-config :: fzf, starship, zoxide.
+# ~/.bashrc.d/40-shellui.sh — linux-devops-tools :: fzf, starship, zoxide.
 #
 # The only startup-time completion work in the whole set. Everything else is
 # lazy-loaded by bash-completion from the generated cache.

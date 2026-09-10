@@ -10,7 +10,11 @@ diverged" section rather than being quietly left behind.
 
 | spec | status | what it covers |
 |---|---|---|
-| [001-devops-env-config](001-devops-env-config/) — [spec](001-devops-env-config/spec.md) · [plan](001-devops-env-config/plan.md) | implemented | the whole repository: capturing a hand-built workstation as a description, generalising it to both supported distributions, making re-runs safe, and keeping browser-based logins working on a terminal-only machine |
+| [001-linux-devops-tools](001-linux-devops-tools/) — [spec](001-linux-devops-tools/spec.md) · [plan](001-linux-devops-tools/plan.md) | implemented | the whole repository: capturing a hand-built workstation as a description, generalising it to both supported distributions, making re-runs safe, and keeping browser-based logins working on a terminal-only machine |
+
+001 was written and shipped while this repository still answered to an earlier name. The
+directory is named for the **project**, not for the branch, so it was renamed along with the
+project; the feature branch it shipped on keeps the older slug, and git history keeps both.
 
 New spec: take the next free `NNN`, create `specs/NNN-short-name/`, write `spec.md` before any
 code, then `plan.md` before any design work. Keep tooling, file layouts and commands out of the

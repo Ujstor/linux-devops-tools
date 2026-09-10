@@ -172,10 +172,17 @@ RULES_DOC='
   pin-defined        every *_VERSION / *_REF a module reads is defined in
                      versions.env, unless the module assigns it itself — no
                      undefined and no invented pins
-  old-name           the previous repository name may appear only in the migration
-                     documents, and never inside a URL
+  old-name           NEITHER former repository name (wsl2-config,
+                     devops-env-config) may appear outside the migration
+                     documents, and never inside a URL or a checkout path
   exec-bit           modules and bin/ are executable; lib/ is not
 '
+
+# Every name this repository has had and shed. `Ujstor/devops-env-config` is not
+# merely out of date: it 404s, so a stale install one-liner is a broken one, and
+# `~/.local/share/devops-env-config` is a state directory nothing writes any more.
+# Both are caught by the same rule and on the same terms — see rule_old_name.
+OLD_NAMES='wsl2-config devops-env-config'
 
 rule_strict_mode() {
   local f first
@@ -366,71 +373,85 @@ rule_pin_defined() {
   return 0
 }
 
+# old_name_scan OLD — every `file:line:text` in this checkout that mentions OLD.
+# Always in a subshell: it has to `cd` to $ROOT to get git's path shape, and the
+# caller's working directory is not its to change.
+old_name_scan() (
+  local old=$1
+  cd "$ROOT" || exit 0
+  # `git rev-parse`, NOT `[ -d .git ]`: in a `git worktree` checkout .git is a
+  # FILE, so -d is false and the rule quietly switches to the fallback below —
+  # the branch nobody runs, which emits `./README.md` where git emits
+  # `README.md`, so the anchored allow-list matches nothing and every exempt
+  # file is reported. Measured in a worktree: 13 findings on a clean tree,
+  # one of them against .git itself. A gate that cries wolf gets switched off,
+  # which is the same outcome as a gate that cannot fire.
+  if command -v git >/dev/null 2>&1 \
+    && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # --untracked is load-bearing. Plain `git grep` searches TRACKED files
+    # only, so a working tree full of new-but-uncommitted files scans to
+    # nothing and the rule reports "clean". That is not hypothetical: this
+    # whole repository was written as untracked files, every local run passed,
+    # and the rule only fired once CI checked out the commit. --untracked adds
+    # the working tree while still honouring .gitignore.
+    git grep --untracked -nIH -- "$old" -- . 2>/dev/null || true
+  else
+    # No git at all (a release tarball). Emit git's path shape — no leading
+    # `./` — so the allow-list above judges the same strings either way, and
+    # exclude .git whether it is a directory or a worktree's pointer file.
+    grep -rnIH --exclude-dir=.git --exclude=.git -- "$old" . 2>/dev/null \
+      | sed 's|^\./||' || true
+  fi
+)
+
 rule_old_name() {
-  # Files whose SUBJECT is the old repository. Naming it there is the point, so
-  # they are exempt outright — including in a URL, which is the whole content of
-  # a migration instruction. Anything not on this list may mention the old name
-  # only in a comment, and never in a URL.
-  #   README.md             carries the migration note
-  #   docs/migration.md     is the migration guide: it must show the OLD command
+  # Files whose SUBJECT is a former repository name. Naming one there is the
+  # point, so they are exempt outright — including in a URL, which is the whole
+  # content of a migration instruction. ONE list serves BOTH names in
+  # $OLD_NAMES, because it is the same handful of files that carry both
+  # migrations. Anything not on it may mention a former name only in a comment,
+  # and never in a URL or a checkout path.
+  #   README.md             carries the migration notes
+  #   docs/migration.md     is the migration guide: it must show the OLD commands
   #   docs/modules.md       documents the migrate module, in table cells that
   #                         cannot be shell comments
-  #   modules/92-migrate.sh IS the migrate module — it looks for the old checkout
-  #   tests/policy/rules.sh this rule's own pattern, and its self-test fixture
-  local old='wsl2-config'
+  #   modules/92-migrate.sh IS the migrate module — it looks for the old checkouts
+  #   tests/policy/rules.sh this rule's own patterns, and its self-test fixtures
   local allow='^(README\.md|docs/migration\.md|docs/modules\.md|modules/92-migrate\.sh|tests/policy/rules\.sh)$'
-  local hit file rest line text
-  while IFS= read -r hit; do
-    [ -n "$hit" ] || continue
-    file=${hit%%:*}
-    rest=${hit#*:}
-    line=${rest%%:*}
-    text=${rest#*:}
-    case $text in
-      *"# policy-allow: old-name"*) continue ;;
-    esac
-    # The allow-list is checked FIRST. It used to sit after the URL branch, which
-    # made the exemption useless for exactly the files that need it: docs/
-    # migration.md exists to print the old install URL, and got flagged for it.
-    printf '%s' "$file" | grep -qE "$allow" && continue
-    # In a URL or a clone target it is always wrong — that is a pipeline pointing
-    # at the repository this one replaced.
-    if printf '%s' "$text" | grep -qE "(github(usercontent)?\.com[:/][^\"' ]*|/)${old}(\.git|/|\"|'|$)"; then
-      fail old-name "$file:$line" "the old repository name in a URL: ${text#"${text%%[![:space:]]*}"}"
-      continue
-    fi
-    # Elsewhere it may only appear in a comment explaining the migration.
-    case ${text#"${text%%[![:space:]]*}"} in
-      '#'* | '*'* | '//'*) continue ;;
-    esac
-    fail old-name "$file:$line" \
-      "the old repository name outside README.md / docs/migration.md and outside a comment"
-  done < <(
-    cd "$ROOT" || exit 0
-    # `git rev-parse`, NOT `[ -d .git ]`: in a `git worktree` checkout .git is a
-    # FILE, so -d is false and the rule quietly switches to the fallback below —
-    # the branch nobody runs, which emits `./README.md` where git emits
-    # `README.md`, so the anchored allow-list matches nothing and every exempt
-    # file is reported. Measured in a worktree: 13 findings on a clean tree,
-    # one of them against .git itself. A gate that cries wolf gets switched off,
-    # which is the same outcome as a gate that cannot fire.
-    if command -v git >/dev/null 2>&1 \
-      && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-      # --untracked is load-bearing. Plain `git grep` searches TRACKED files
-      # only, so a working tree full of new-but-uncommitted files scans to
-      # nothing and the rule reports "clean". That is not hypothetical: this
-      # whole repository was written as untracked files, every local run passed,
-      # and the rule only fired once CI checked out the commit. --untracked adds
-      # the working tree while still honouring .gitignore.
-      git grep --untracked -nIH -- "$old" -- . 2>/dev/null || true
-    else
-      # No git at all (a release tarball). Emit git's path shape — no leading
-      # `./` — so the allow-list above judges the same strings either way, and
-      # exclude .git whether it is a directory or a worktree's pointer file.
-      grep -rnIH --exclude-dir=.git --exclude=.git -- "$old" . 2>/dev/null \
-        | sed 's|^\./||' || true
-    fi
-  )
+  local old hit file rest line text
+  # Both names, on identical terms. A rule that guarded only the first one would
+  # have waved through the very URL that broke the install one-liner.
+  for old in $OLD_NAMES; do
+    while IFS= read -r hit; do
+      [ -n "$hit" ] || continue
+      file=${hit%%:*}
+      rest=${hit#*:}
+      line=${rest%%:*}
+      text=${rest#*:}
+      case $text in
+        *"# policy-allow: old-name"*) continue ;;
+      esac
+      # The allow-list is checked FIRST. It used to sit after the URL branch,
+      # which made the exemption useless for exactly the files that need it:
+      # docs/migration.md exists to print the old install URLs, and got flagged
+      # for it.
+      printf '%s' "$file" | grep -qE "$allow" && continue
+      # In a URL, a clone target or a checkout path it is always wrong — that is
+      # a pipeline pointing at a repository this one has left behind, and for
+      # `devops-env-config` the URL does not merely redirect, it 404s.
+      if printf '%s' "$text" | grep -qE "(github(usercontent)?\.com[:/][^\"' ]*|/)${old}(\.git|/|\"|'|$)"; then
+        fail old-name "$file:$line" \
+          "'$old' in a URL or a checkout path: ${text#"${text%%[![:space:]]*}"}"
+        continue
+      fi
+      # Elsewhere it may only appear in a comment explaining the migration.
+      case ${text#"${text%%[![:space:]]*}"} in
+        '#'* | '*'* | '//'*) continue ;;
+      esac
+      fail old-name "$file:$line" \
+        "'$old' outside the migration documents and outside a comment"
+    done < <(old_name_scan "$old")
+  done
   return 0
 }
 
@@ -473,11 +494,27 @@ run_rules() {
 # assert every rule fires. A rule that stops firing is worse than no rule.
 # ---------------------------------------------------------------------------
 
+# The former names the self-test HOLDS old-name to. A literal, NOT a read of
+# $OLD_NAMES: an assertion that takes its expectation from the thing it is
+# checking cannot notice a name being dropped from that list — it would simply
+# check one name fewer and still print ok. Shedding a name is a decision; make it
+# here, in the fixture, and in $OLD_NAMES, all three.
+SELFTEST_OLD_NAMES='wsl2-config devops-env-config'
+
 self_test() {
-  local dir rc=0 rule
+  local dir findings rc=0 rule
   dir=$(mktemp -d "${TMPDIR:-/tmp}/policy-selftest.XXXXXXXX")
-  # shellcheck disable=SC2064  # expand now: a fresh mktemp path
-  trap "rm -rf -- '$dir'" EXIT
+  # The findings are kept, not discarded, so the assertions below can read what
+  # each rule actually said — `old-name` guards two names now, and "the rule
+  # fired" no longer proves both are guarded.
+  #
+  # OUTSIDE the synthetic tree, deliberately: this file quotes both former
+  # repository names, and old-name walks $dir recursively. A findings file inside
+  # it would be a violation of the very rule it exists to check, reported as a
+  # false positive by the compliant-tree phase below.
+  findings=$(mktemp "${TMPDIR:-/tmp}/policy-selftest-findings.XXXXXXXX")
+  # shellcheck disable=SC2064  # expand now: fresh mktemp paths
+  trap "rm -rf -- '$dir' '$findings'" EXIT
   mkdir -p "$dir/modules" "$dir/lib" "$dir/bin"
 
   printf 'GOOD_VERSION=v1.0.0\n' >"$dir/versions.env"
@@ -535,7 +572,9 @@ lsb_release -cs
 url=https://example.com/dl/tool-linux-amd64.tar.gz
 gh_release_install owner/repo 'tool-{version}.tar.gz' tool "$MISSING_VERSION"
 source "${DEVENV_HOME}/lib/net.sh"
-old=https://raw.githubusercontent.com/Owner/wsl2-config/main/install.sh
+stale_url_1=https://raw.githubusercontent.com/Owner/wsl2-config/main/install.sh
+stale_url_2=https://raw.githubusercontent.com/Owner/devops-env-config/main/install.sh
+stale_home=$HOME/.local/share/devops-env-config
 EOF
   chmod 0644 "$dir/modules/50-bad.sh"
 
@@ -560,7 +599,7 @@ EOF
   FAILED=0
   FIRED=''
   printf '%s: self-test — the findings below are SYNTHETIC and expected\n' "$PROG" >&2
-  run_rules 2>/dev/null
+  run_rules 2>"$findings"
 
   for rule in $RULES; do
     case " $FIRED " in
@@ -570,6 +609,21 @@ EOF
         rc=1
         ;;
     esac
+  done
+
+  # old-name guards two names, and ONE finding is enough to put the rule in
+  # $FIRED. That is exactly how a second old name could go unguarded while the
+  # self-test still printed `ok  old-name fires` — so assert each name by itself.
+  # `-A1` reaches the message line: fail() prints the location first and the
+  # offending text on the line under it.
+  local name
+  for name in $SELFTEST_OLD_NAMES; do
+    if grep -A1 -e 'POLICY \[old-name\]' "$findings" | grep -qF -e "$name"; then
+      printf '  ok    old-name catches %s\n' "$name"
+    else
+      printf '  FAIL  old-name did not catch %s\n' "$name"
+      rc=1
+    fi
   done
 
   # A well-formed module must produce nothing at all.

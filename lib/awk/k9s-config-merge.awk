@@ -1,4 +1,4 @@
-# devops-env-config :: merge the repo's k9s settings into an existing config.yaml
+# linux-devops-tools :: merge the repo's k9s settings into an existing config.yaml
 #
 #   awk -f lib/awk/k9s-config-merge.awk config/k9s/config.yaml ~/.config/k9s/config.yaml >new
 #        ^ PAYLOAD (repo-owned, wins)      ^ TARGET (k9s-owned, preserved)

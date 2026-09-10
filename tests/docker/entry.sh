@@ -124,7 +124,7 @@ fp_prunes() {
     "$HOME_DIR/.rustup" "$HOME_DIR/.cargo/registry" \
     "$HOME_DIR/.krew/index" "$HOME_DIR/.config/nvm/.cache" \
     "$HOME_DIR/.config/go/telemetry" \
-    "$HOME_DIR/.config/nvm/.git" "$HOME_DIR/.local/share/devops-env-config" \
+    "$HOME_DIR/.config/nvm/.git" "$HOME_DIR/.local/share/linux-devops-tools" \
     "$HOME_DIR/.local/share/uv/python"; do
     printf -- '-path\n%s\n-o\n' "$d"
   done
@@ -438,7 +438,7 @@ check_shell_integration() {
   # appended a second zero and $blocks became the two-line string "0\n0".
   # Counting the lines ourselves keeps it a number.
   local blocks
-  blocks=$(grep -c '^# >>> devops-env-config' "$HOME_DIR/.bashrc" 2>/dev/null) || blocks=0
+  blocks=$(grep -c '^# >>> linux-devops-tools' "$HOME_DIR/.bashrc" 2>/dev/null) || blocks=0
   if [ "$blocks" = 1 ]; then
     ok 'exactly one managed block in ~/.bashrc'
   elif profile_has shell; then

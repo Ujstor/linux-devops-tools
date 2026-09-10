@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/pkg.sh — the ONE apt policy.
 #
-# devops-env-config :: shared library. Sourced by lib/common.sh only.
+# linux-devops-tools :: shared library. Sourced by lib/common.sh only.
 #
 # Rules that hold everywhere:
 #   * `apt-get` only. `apt` is explicitly not a stable scripting interface, and
@@ -215,7 +215,7 @@ _pkg_remove_impl() {
   done
   [ ${#present[@]} -gt 0 ] || return 0
   log_warn "these packages conflict with what this module installs: ${present[*]}"
-  log_warn "  devops-env-config does not remove packages you installed."
+  log_warn "  linux-devops-tools does not remove packages you installed."
   log_warn "  To remove them yourself:  sudo apt-get $mode ${present[*]}"
   if ! confirm_dangerous "remove ${present[*]} now?" DEVENV_ALLOW_PKG_REMOVE; then
     return 0

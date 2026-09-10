@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: Crunchy Postgres + cert-manager
+# linux-devops-tools :: k9s plugins :: Crunchy Postgres + cert-manager
 plugins:
   pg-psql:
     shortCut: Shift-C

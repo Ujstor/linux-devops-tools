@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ~/.bashrc.d/70-tools.sh — devops-env-config :: per-tool PATH and hooks.
+# ~/.bashrc.d/70-tools.sh — linux-devops-tools :: per-tool PATH and hooks.
 # Loads last, so anything here sits on top of mybash's own prompt work.
 
 # 10-path.sh owns these helpers. Define no-op-safe fallbacks in case the user

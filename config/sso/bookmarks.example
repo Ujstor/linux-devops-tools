@@ -1,4 +1,4 @@
-# devops-env-config :: bookmarks for `web <name>`.  PLACEHOLDERS ONLY.
+# linux-devops-tools :: bookmarks for `web <name>`.  PLACEHOLDERS ONLY.
 # Format: name<TAB>url. Lines starting with # are ignored.
 # Seeded once to ~/.config/devops-env/bookmarks (mode 0600, gitignored) and never
 # overwritten. Replace every example.com below with your own hosts.

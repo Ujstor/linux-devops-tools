@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ~/.bashrc.d/60-aliases.sh — devops-env-config :: aliases and small helpers.
+# ~/.bashrc.d/60-aliases.sh — linux-devops-tools :: aliases and small helpers.
 # Loads after mybash, so an `unalias` here wins.
 
 # --- grep: ripgrep is NOT a drop-in grep (K30) -----------------------------

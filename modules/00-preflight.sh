@@ -119,7 +119,7 @@ report_container() {
 }
 
 module_main() {
-  os_require_supported || die "devops-env-config targets Debian and Ubuntu; this box is ${OS_PRETTY:-unknown}"
+  os_require_supported || die "linux-devops-tools targets Debian and Ubuntu; this box is ${OS_PRETTY:-unknown}"
 
   # bin/devenv prints this once for the whole run. Standalone
   # (`DEVENV_HOME=$PWD ./modules/00-preflight.sh`) nobody has, so print it here.

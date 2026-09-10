@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ~/.bashrc.d/20-lang.sh — devops-env-config :: Go, Rust, Python and Node.
+# ~/.bashrc.d/20-lang.sh — linux-devops-tools :: Go, Rust, Python and Node.
 #
 # The pre-repo ~/.bashrc sourced ~/.cargo/env TWICE (once as `.`, once as
 # `source`) and loaded nvm eagerly, which measured 0.20 s of every interactive

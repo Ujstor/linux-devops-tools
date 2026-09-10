@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# devops-env-config :: runtime detection for open-url / clip / clip-paste.
+# linux-devops-tools :: runtime detection for open-url / clip / clip-paste.
 # Installed at ~/.local/lib/devops-env/detect.sh. Sourced, never executed.
 # NOT lib/os.sh — that one is module-side, runs inside a `devenv` run and exports
 # OS_*/IS_*. This one runs in the user's shell and in processes spawned by

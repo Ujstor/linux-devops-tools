@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ~/.bashrc.d/05-env.sh — devops-env-config :: environment defaults.
+# ~/.bashrc.d/05-env.sh — linux-devops-tools :: environment defaults.
 #
 # Everything here is SET-IF-UNSET, so an earlier ~/.bashrc (mybash, or your own)
 # always wins. Exactly one fork happens in this file: the `tty` call gpg needs,

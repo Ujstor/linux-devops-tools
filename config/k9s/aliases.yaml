@@ -1,4 +1,4 @@
-# devops-env-config :: k9s aliases
+# linux-devops-tools :: k9s aliases
 # Typed at the ':' prompt. k9s already auto-registers every resource's plural,
 # singular and CRD shortNames from API discovery - these are the extra
 # hand-rolled ones. Value = GVR: "group/version/resource", "version/resource"

@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: nodes
+# linux-devops-tools :: k9s plugins :: nodes
 # NOTE: k9s already binds <c> Cordon, <u> Uncordon, <r> Drain on nodes.
 plugins:
   node-root-shell:

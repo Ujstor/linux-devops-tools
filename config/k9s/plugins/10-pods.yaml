@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: pods & containers
+# linux-devops-tools :: k9s plugins :: pods & containers
 plugins:
   stern-pod:
     shortCut: Ctrl-L

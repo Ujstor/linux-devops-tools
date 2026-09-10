@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: helm
+# linux-devops-tools :: k9s plugins :: helm
 # NOTE: k9s already binds <v> Values and <r> Releases in the helm view,
 #       and <r> RollBackTo... in the release-history view.
 plugins:
