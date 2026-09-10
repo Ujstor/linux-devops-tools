@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sso-login — trigger each tool's own web-login flow from a terminal-only box.
-# devops-env-config
+# linux-devops-tools
 #
 #   sso-login [PROVIDER…]     k8s | azure | aks | gh | gitlab | argocd | bao | all
 #   sso-login --status        read-only: what is authenticated, and until when

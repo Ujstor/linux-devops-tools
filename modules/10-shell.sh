@@ -90,7 +90,7 @@ report_mybash() {
     log_info "mybash is cloned but NOT activated. This repo will not run its setup.sh."
     log_info "  To adopt its prompt only:  ln -sfn '$dir/starship.toml' ~/.config/starship.toml"
     log_info "  To adopt its ~/.bashrc:    review '$dir/.bashrc' first, then link it yourself."
-    log_info "  Your devops-env-config block is re-added to whatever ~/.bashrc ends up being."
+    log_info "  Your linux-devops-tools block is re-added to whatever ~/.bashrc ends up being."
     return 0
   fi
 

@@ -1,4 +1,4 @@
-# devops-env-config :: global gitignore, shipped to ~/.config/git/ignore.
+# linux-devops-tools :: global gitignore, shipped to ~/.config/git/ignore.
 # git reads this path by default when XDG_CONFIG_HOME applies, so no
 # core.excludesFile key is set — one less thing in your ~/.gitconfig.
 

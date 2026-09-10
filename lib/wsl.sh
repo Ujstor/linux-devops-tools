@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/wsl.sh — /etc/wsl.conf and WSL helpers.
 #
-# devops-env-config :: shared library. Sourced by lib/common.sh only.
+# linux-devops-tools :: shared library. Sourced by lib/common.sh only.
 #
 # K27, and it is a hard rule: /etc/wsl.conf is edited by ADDITIVE KEY MERGE only.
 # The old scripts/docker.sh wrote the whole file, which would erase

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# install.sh — the devops-env-config bootstrapper.
+# install.sh — the linux-devops-tools bootstrapper.
 #
 # This is the ONLY file in the repository whose URL is a public contract:
 #
-#     curl -fsSL https://raw.githubusercontent.com/Ujstor/devops-env-config/main/install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/Ujstor/linux-devops-tools/main/install.sh | bash
 #
 # It must therefore stay small, stable and self-contained. It SOURCES NOTHING from
 # lib/ — it runs before the checkout exists — and it does exactly four things:
@@ -17,7 +17,7 @@
 # bin/devenv. Run `devenv --help` for that.
 #
 # The three invocations that must all work, and are all tested:
-#     curl -fsSL https://raw.githubusercontent.com/Ujstor/devops-env-config/main/install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/Ujstor/linux-devops-tools/main/install.sh | bash
 #     cat install.sh | bash -s -- --dry-run
 #     ./install.sh --profile devops            # from a local checkout: no clone, no network
 #
@@ -43,12 +43,12 @@ set -euo pipefail
 # Configuration (every value overridable from the environment)
 # ---------------------------------------------------------------------------
 
-DEVENV_REPO=${DEVENV_REPO:-Ujstor/devops-env-config}
+DEVENV_REPO=${DEVENV_REPO:-Ujstor/linux-devops-tools}
 DEVENV_REF=${DEVENV_REF:-main}
 # Overridable so a fork, a mirror or an offline test can be used without patching
 # this file. It must be a git URL git itself understands.
 DEVENV_REPO_URL=${DEVENV_REPO_URL:-https://github.com/$DEVENV_REPO.git}
-DEVENV_HOME_DEFAULT="${XDG_DATA_HOME:-$HOME/.local/share}/devops-env-config"
+DEVENV_HOME_DEFAULT="${XDG_DATA_HOME:-$HOME/.local/share}/linux-devops-tools"
 
 # Was DEVENV_HOME chosen by the caller, or are we falling back to the default?
 # It decides whether being launched from inside some other checkout wins.
@@ -97,12 +97,12 @@ trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
-devops-env-config bootstrapper
+linux-devops-tools bootstrapper
 
-  curl -fsSL https://raw.githubusercontent.com/Ujstor/devops-env-config/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Ujstor/linux-devops-tools/main/install.sh | bash
   ./install.sh [BOOTSTRAP OPTIONS] [DEVENV OPTIONS] [COMMAND]
 
-It clones (or fast-forwards) the repository into ~/.local/share/devops-env-config
+It clones (or fast-forwards) the repository into ~/.local/share/linux-devops-tools
 and hands over to bin/devenv. Run from inside a checkout it clones nothing at all.
 
 Bootstrap options (consumed here):
@@ -127,11 +127,11 @@ Everything else is forwarded verbatim to bin/devenv, for example:
 
 The full option and command list, once the checkout exists:
 
-  ~/.local/share/devops-env-config/bin/devenv --help
+  ~/.local/share/linux-devops-tools/bin/devenv --help
 
 Environment:
-  DEVENV_HOME        checkout location      (default ~/.local/share/devops-env-config)
-  DEVENV_REPO        owner/name to clone    (default Ujstor/devops-env-config)
+  DEVENV_HOME        checkout location      (default ~/.local/share/linux-devops-tools)
+  DEVENV_REPO        owner/name to clone    (default Ujstor/linux-devops-tools)
   DEVENV_REPO_URL    full git URL to clone  (default https://github.com/$DEVENV_REPO.git)
   DEVENV_REF         git ref to install     (default main)
   DEVENV_ALLOW_ROOT  set to 1 to allow running as root
@@ -193,10 +193,10 @@ assert_writable_dest() {
   [ -d "$d" ] || die "$d exists and is not a directory. Move it aside or pass --home elsewhere."
   [ -O "$d" ] || die "$d is not owned by $(id -un). Refusing to touch it."
   is_checkout "$d" && return 0
-  err "$d already exists but does not look like a devops-env-config checkout."
+  err "$d already exists but does not look like a linux-devops-tools checkout."
   err "It is missing one of lib/common.sh, bin/devenv, versions.env."
   err "Nothing was changed. Move that directory aside, or install elsewhere:"
-  err "    ./install.sh --home \"\$HOME/.local/share/devops-env-config-new\""
+  err "    ./install.sh --home \"\$HOME/.local/share/linux-devops-tools-new\""
   exit 1
 }
 

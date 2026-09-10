@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/log.sh — logging primitives.
 #
-# devops-env-config :: shared library.
+# linux-devops-tools :: shared library.
 # Sourced by lib/common.sh only. Never executed, never `set -e` here.
 #
 # CONTRACT: every log function writes to STDERR. stdout belongs to machine-readable

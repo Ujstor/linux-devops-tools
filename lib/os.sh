@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/os.sh — distro / platform / architecture detection.
 #
-# devops-env-config :: shared library. Sourced by lib/common.sh only.
+# linux-devops-tools :: shared library. Sourced by lib/common.sh only.
 #
 # MUST-FIX C8: /etc/os-release is NEVER sourced. It is parsed line by line so that
 # NAME, VERSION, ID, LOGO, HOME_URL … can never leak into the caller's shell.
@@ -403,7 +403,7 @@ os_upstream_ge() {
 os_require_supported() {
   if [ -z "${OS_FAMILY:-}" ]; then
     log_error "unsupported distribution: ${OS_PRETTY:-${OS_ID:-unknown}}"
-    log_error "devops-env-config targets Debian 12/13 and Ubuntu 22.04/24.04 (and Debian-family derivatives)."
+    log_error "linux-devops-tools targets Debian 12/13 and Ubuntu 22.04/24.04 (and Debian-family derivatives)."
     return 1
   fi
   if [ -z "${OS_UPSTREAM_CODENAME:-}" ]; then

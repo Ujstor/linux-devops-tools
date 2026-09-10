@@ -1,4 +1,4 @@
-# devops-env-config :: k9s skin :: devenv-dark  (daily driver)
+# linux-devops-tools :: k9s skin :: devenv-dark  (daily driver)
 # Palette: Catppuccin Mocha. Hex is supported by k9s (Color.isHex: "#rrggbb").
 # Use "default" or "-" for any colour you want to inherit from the terminal.
 k9s:

@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: Argo CD + External Secrets
+# linux-devops-tools :: k9s plugins :: Argo CD + External Secrets
 # kubectl-only: no argocd CLI login required.
 plugins:
   argo-refresh:

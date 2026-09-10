@@ -1,4 +1,4 @@
-# 001 — devops-env-config
+# 001 — linux-devops-tools
 
 **What and why. No technology.** Every decision about *how* — architecture, interfaces,
 mechanisms, tooling — lives in [plan.md](plan.md). If a sentence here names a tool, it is a bug.

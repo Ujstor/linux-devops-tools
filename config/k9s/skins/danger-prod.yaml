@@ -1,4 +1,4 @@
-# devops-env-config :: k9s skin :: danger-prod
+# linux-devops-tools :: k9s skin :: danger-prod
 # PROD - every table cursor, crumb bar and border is red. STOP AND THINK.
 k9s:
   body:

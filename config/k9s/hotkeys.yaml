@@ -1,4 +1,4 @@
-# devops-env-config :: k9s hotkeys  (~/.config/k9s/hotkeys.yaml)
+# linux-devops-tools :: k9s hotkeys  (~/.config/k9s/hotkeys.yaml)
 #
 # KEY SPACE (MUST-FIX C2 - do not go back to Shift-<digit>)
 #   k9s resolves a shortCut through tcell.KeyNames, where "Shift-1" is the

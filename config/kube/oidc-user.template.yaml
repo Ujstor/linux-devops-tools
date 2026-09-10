@@ -1,4 +1,4 @@
-# devops-env-config :: Keycloak OIDC credential template. PLACEHOLDERS ONLY.
+# linux-devops-tools :: Keycloak OIDC credential template. PLACEHOLDERS ONLY.
 #
 # `sso-kubeconfig-add` renders this from ~/.config/devops-env/sso.env and applies it
 # with `kubectl config set-credentials`. It is shipped so the stanza can be reviewed

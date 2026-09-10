@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: core (scope: all)
+# linux-devops-tools :: k9s plugins :: core (scope: all)
 #
 # Bound in EVERY view. Keys reserved here: Shift-Y E T B I G W Q.
 # `all` also binds in k9s's pseudo-views (containers, helm history, xray, ...)

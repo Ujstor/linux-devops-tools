@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# open-url — the single URL/file opener on this box.  devops-env-config
+# open-url — the single URL/file opener on this box.  linux-devops-tools
 #
 # Reached three ways:
 #   1. $BROWSER            (az, gh, glab — they honour it)

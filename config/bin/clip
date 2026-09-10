@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# clip — copy stdin to the clipboard.  devops-env-config
+# clip — copy stdin to the clipboard.  linux-devops-tools
 # ~/.local/bin/pbcopy is a symlink to this file.
 #
 # An EXECUTABLE, not a shell function, because tmux copy-pipe, k9s plugins, a

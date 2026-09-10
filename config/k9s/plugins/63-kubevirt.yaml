@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: KubeVirt (virtctl)
+# linux-devops-tools :: k9s plugins :: KubeVirt (virtctl)
 plugins:
   vm-console:
     shortCut: Shift-C

@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: Cilium
+# linux-devops-tools :: k9s plugins :: Cilium
 # Requires: kubectl krew install cilium  (kubectl-cilium: exec into the agent on a node)
 plugins:
   cnp-matching-endpoints:

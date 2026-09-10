@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://github.com/kubecolor/kubecolor/raw/main/config-schema.json
 #
-# devops-env-config :: kubecolor
+# linux-devops-tools :: kubecolor
 # Installed at ~/.kube/color.yaml (override the path with $KUBECOLOR_CONFIG).
 # CREATE-IF-ABSENT: modules/35-kubernetes.sh never overwrites this file, because
 # a colour theme is something you tune by hand. Delete it and re-run

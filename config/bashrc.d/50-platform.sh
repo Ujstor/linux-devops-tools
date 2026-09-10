@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ~/.bashrc.d/50-platform.sh — devops-env-config :: browser and clipboard wiring.
+# ~/.bashrc.d/50-platform.sh — linux-devops-tools :: browser and clipboard wiring.
 #
 # The pre-repo ~/.bashrc defined `alias pbcopy='clip.exe'`,
 # `alias pbpaste='powershell.exe … Get-Clipboard'`, `alias winclip='clip.exe'`

@@ -1,4 +1,4 @@
-# ~/.bashrc.d/55-sso.sh — devops-env-config :: SSO / web-login environment.
+# ~/.bashrc.d/55-sso.sh — linux-devops-tools :: SSO / web-login environment.
 # shellcheck shell=bash
 # Loads after 50-platform.sh, which owns $BROWSER and $DEVENV_BROWSER_MODE.
 # The number 55 is shared with modules/55-media.sh — different namespace, no

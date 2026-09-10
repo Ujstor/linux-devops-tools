@@ -1,4 +1,4 @@
-# devops-env-config
+# linux-devops-tools
 
 One command turns a fresh **Debian** or **Ubuntu** box — a WSL2 distro, a VM, a cloud instance,
 a container — into a terminal-only DevOps workstation: kubectl and its plugin roster, k9s with
@@ -11,10 +11,10 @@ nothing, and `--dry-run` is a true no-op.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ujstor/devops-env-config/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ujstor/linux-devops-tools/main/install.sh | bash
 ```
 
-That clones the repository to `~/.local/share/devops-env-config` and runs the default `devops`
+That clones the repository to `~/.local/share/linux-devops-tools` and runs the default `devops`
 profile. Nothing is installed system-wide until a module that needs root actually runs, and it
 asks then — never up front.
 
@@ -23,7 +23,7 @@ asks then — never up front.
 curl -fsSL .../install.sh | bash -s -- --dry-run
 
 # From a checkout: the same code path, no clone.
-git clone https://github.com/Ujstor/devops-env-config.git && cd devops-env-config
+git clone https://github.com/Ujstor/linux-devops-tools.git && cd linux-devops-tools
 ./install.sh --dry-run
 ./install.sh --profile minimal
 ```
@@ -112,20 +112,35 @@ will never do to your machine: [docs/safety.md](docs/safety.md).
 | [docs/keycloak-client.md](docs/keycloak-client.md) | the identity-provider side: client settings, redirect URIs, the `groups` mapper, API-server flags |
 | [docs/safety.md](docs/safety.md) | the rules this repository holds itself to, and what it will never do |
 | [docs/wsl.md](docs/wsl.md) | WSL-specific notes and the Windows-side `wsl.exe` reference |
-| [docs/migration.md](docs/migration.md) | migrating from `wsl2-config` |
+| [docs/migration.md](docs/migration.md) | migrating from `wsl2-config`, and from this repository's own former name `devops-env-config` |
 | [docs/development.md](docs/development.md) | working on this repo: `make` targets, the policy linters, the module contract |
 | [lib/README.md](lib/README.md) | the shell library API |
 | [`versions.env`](versions.env) | **every pin in the repository.** Nothing else pins anything |
 
-## Coming from `wsl2-config`
+## Coming from an older name
 
-This repository was previously `Ujstor/wsl2-config`, a set of curl-piped scripts for one WSL2
-box. A machine provisioned by those scripts has residue worth cleaning up. Install this tool
-first, then — before changing anything else — run the report:
+This repository has been `Ujstor/wsl2-config` and, after that, `Ujstor/devops-env-config`.
+GitHub redirects the first — it was a real repository, renamed. The second was never a GitHub
+repository at all, so there is nothing to redirect from and a one-liner still pointing at it
+**404s** outright.
+
+**From `wsl2-config`** — a set of curl-piped scripts for one WSL2 box. A machine those scripts
+provisioned has residue worth cleaning up. Install this tool first, then — before changing
+anything else — run the report:
 
 ```bash
 devenv --only migrate        # reports only; DEVENV_MIGRATE_APPLY=1 makes it act
 ```
 
-[docs/migration.md](docs/migration.md) covers what changed, what to run first, and how to remove
-what the old scripts left behind.
+**From `devops-env-config`** — the same tool under a new name. The command is still `devenv`,
+every `DEVENV_*` variable is unchanged, and nothing in `~/.config/devops-env/`,
+`~/.cache/devops-env/` or `~/.local/state/devops-env/` moves. Two things do move: the checkout
+(`~/.local/share/devops-env-config` → `~/.local/share/linux-devops-tools`) and the marker on the
+managed `~/.bashrc` block. The marker takes care of itself — the block is re-fenced in place on
+the next run, never duplicated. Re-run the installer above, then delete the old checkout:
+
+```bash
+rm -rf ~/.local/share/devops-env-config
+```
+
+[docs/migration.md](docs/migration.md) covers both, with the exact commands.

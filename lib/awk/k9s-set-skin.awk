@@ -1,4 +1,4 @@
-# devops-env-config :: point one k9s config at a skin (and optionally lock it)
+# linux-devops-tools :: point one k9s config at a skin (and optionally lock it)
 #
 #   awk -v skin=danger-prod [-v readonly=true] -f lib/awk/k9s-set-skin.awk \
 #       <config.yaml> > <config.yaml>.new

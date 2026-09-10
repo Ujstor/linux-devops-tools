@@ -3,11 +3,11 @@
 **Source of truth:** `devenv --help` and `install.sh --help` on your checkout. This page is the
 narrated version, verified 2026-09-10.
 
-`devenv` lives at `~/.local/share/devops-env-config/bin/devenv`. The shell integration puts
+`devenv` lives at `~/.local/share/linux-devops-tools/bin/devenv`. The shell integration puts
 `~/.local/bin` at the front of `PATH`; if `devenv` is still not found after `exec bash -l`:
 
 ```bash
-ln -s ~/.local/share/devops-env-config/bin/devenv ~/.local/bin/devenv
+ln -s ~/.local/share/linux-devops-tools/bin/devenv ~/.local/bin/devenv
 ```
 
 ## Commands
@@ -62,9 +62,9 @@ after. See [docs/safety.md](safety.md).
 and forwards everything else verbatim to `devenv`. Run from inside a checkout it clones nothing.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ujstor/devops-env-config/main/install.sh | bash -s -- --profile full
+curl -fsSL https://raw.githubusercontent.com/Ujstor/linux-devops-tools/main/install.sh | bash -s -- --profile full
 curl -fsSL .../install.sh | bash -s -- --ref v1.2.3
-curl -fsSL .../install.sh | bash -s -- --home /opt/devops-env-config
+curl -fsSL .../install.sh | bash -s -- --home /opt/linux-devops-tools
 ```
 
 It refuses to write to a directory that is not a checkout of this repository, and it refuses
@@ -110,7 +110,7 @@ non-interactively, and it refuses any path that is not safely under your home di
 Then remove the checkout itself:
 
 ```bash
-rm -rf ~/.local/share/devops-env-config
+rm -rf ~/.local/share/linux-devops-tools
 ```
 
 ## After a run

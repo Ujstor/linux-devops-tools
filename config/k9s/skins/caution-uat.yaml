@@ -1,4 +1,4 @@
-# devops-env-config :: k9s skin :: caution-uat
+# linux-devops-tools :: k9s skin :: caution-uat
 # UAT / staging - amber chrome.
 k9s:
   body:

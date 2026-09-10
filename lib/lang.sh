@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/lang.sh — language package managers and plugin managers.
 #
-# devops-env-config :: shared library. Sourced by lib/common.sh only.
+# linux-devops-tools :: shared library. Sourced by lib/common.sh only.
 #
 # D7/K17/MUST-FIX S12: Python CLIs are installed ONLY with `uv tool install`.
 # pip --user, pipx and --break-system-packages are gone, and nothing here ever

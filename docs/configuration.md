@@ -64,11 +64,11 @@ none of them is safe to imply:
 
 | variable | default |
 |---|---|
-| `DEVENV_HOME` | `~/.local/share/devops-env-config` (the checkout) |
+| `DEVENV_HOME` | `~/.local/share/linux-devops-tools` (the checkout) |
 | `DEVENV_CONFIG` | `~/.config/devops-env` |
 | `DEVENV_CACHE` | `~/.cache/devops-env` |
 | `DEVENV_STATE` | `~/.local/state/devops-env` |
-| `DEVENV_REPO` | `Ujstor/devops-env-config` |
+| `DEVENV_REPO` | `Ujstor/linux-devops-tools` |
 | `DEVENV_REPO_URL` | `https://github.com/$DEVENV_REPO.git` |
 | `DEVENV_REF` | `main` |
 
@@ -111,10 +111,10 @@ All of them are gitignored. None of them is ever committed.
 Shell integration is **one** marker-fenced block in `~/.bashrc`:
 
 ```bash
-# >>> devops-env-config >>>
+# >>> linux-devops-tools >>>
 # Managed block — edit ~/.bashrc.d/ instead. Remove with: devenv shell uninstall
 [ -f "$HOME/.bashrc.d/00-init.bash" ] && . "$HOME/.bashrc.d/00-init.bash"
-# <<< devops-env-config <<<
+# <<< linux-devops-tools <<<
 ```
 
 That block knows about exactly one file. Everything else is a **whole-file drop-in** beside it,

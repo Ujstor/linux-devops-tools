@@ -77,7 +77,7 @@ cannot get — exits `78`, is recorded as a **SKIP**, and the run continues. The
 | `no-hardcoded-arch-url` | no architecture or codename baked into a URL literal |
 | `release-checksum` | every `gh_release_install` carries a checksum option, or `--no-verify` with a stated reason |
 | `pin-defined` | every `*_VERSION`/`*_REF` a module reads exists in `versions.env` |
-| `old-name` | the previous repository name appears only in the migration documents, never in a URL |
+| `old-name` | **neither** former repository name appears outside the migration documents, and never in a URL or a checkout path |
 | `exec-bit` | `modules/` and `bin/` are executable; `lib/` is not |
 
 `tests/policy/privacy.sh` — this repository is public, so the gate is written **structurally**

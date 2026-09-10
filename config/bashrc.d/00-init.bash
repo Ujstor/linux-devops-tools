@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ~/.bashrc.d/00-init.bash — devops-env-config :: the loader. DO NOT EDIT.
+# ~/.bashrc.d/00-init.bash — linux-devops-tools :: the loader. DO NOT EDIT.
 #
 # Reached from ONE marker-fenced block in ~/.bashrc, and it is the only file
 # that block knows about. Everything else this repo contributes to your shell is

@@ -1,4 +1,4 @@
-# devops-env-config :: k9s plugins :: Kyverno
+# linux-devops-tools :: k9s plugins :: Kyverno
 # Keys: Shift-M on the policy/report views, Shift-V on a plain workload.
 plugins:
   kyverno-policy-reports:

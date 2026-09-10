@@ -60,7 +60,7 @@ printf 'first line\n' >"$rc"
 printf 'PAYLOAD\n' | ensure_block_in_file "$rc" ''
 assert_contains "$(cat "$rc")" 'first line' 'the original content survives'
 assert_contains "$(cat "$rc")" 'PAYLOAD' 'the payload is inside the block'
-assert_eq '1' "$(grep -c '^# >>> devops-env-config >>>$' "$rc")" 'exactly one opening fence'
+assert_eq '1' "$(grep -c '^# >>> linux-devops-tools >>>$' "$rc")" 'exactly one opening fence'
 assert_ok 'has_block_in_file finds it' has_block_in_file "$rc" ''
 
 before=$(stat -c '%Y %s' "$rc")
@@ -68,7 +68,7 @@ printf 'PAYLOAD\n' | ensure_block_in_file "$rc" ''
 assert_eq "$before" "$(stat -c '%Y %s' "$rc")" 'a second identical block is a no-op'
 
 printf 'REPLACED\n' | ensure_block_in_file "$rc" ''
-assert_eq '1' "$(grep -c '^# >>> devops-env-config >>>$' "$rc")" \
+assert_eq '1' "$(grep -c '^# >>> linux-devops-tools >>>$' "$rc")" \
   'a changed payload replaces the block in place, it does not append a second one'
 assert_contains "$(cat "$rc")" 'REPLACED' 'with the new payload'
 assert_eq '0' "$(grep -c 'PAYLOAD' "$rc")" 'and the old payload is gone'
@@ -76,11 +76,50 @@ assert_eq '0' "$(grep -c 'PAYLOAD' "$rc")" 'and the old payload is gone'
 remove_block_from_file "$rc" ''
 assert_eq 'first line' "$(cat "$rc")" 'remove_block_from_file leaves the rest untouched'
 
+t_section 'a block written under the pre-rename tag is upgraded, not duplicated'
+
+# The repository was renamed devops-env-config -> linux-devops-tools. Every box
+# installed before that carries the old fences in ~/.bashrc. If the writer only
+# matched the new fence it would append a second block beside the old one and the
+# loader would run twice; if the remover only matched the new fence, `devenv
+# uninstall` would leave the machine sourcing a loader it had just deleted.
+# The two fences are spelled out ONCE, as literals, because that is the contract:
+# this exact text is in ~/.bashrc on every box installed before the rename, and a
+# fixture built from legacy_block_begin_marker would still pass if DEVENV_TAG_LEGACY
+# were wrong. Everything below derives from these two.
+old_begin='# >>> devops-env-config >>>' # policy-allow: old-name
+old_end='# <<< devops-env-config <<<'   # policy-allow: old-name
+assert_eq "$old_begin" "$(legacy_block_begin_marker '')" \
+  'legacy_block_begin_marker still spells the pre-rename opening fence'
+assert_eq "$old_end" "$(legacy_block_end_marker '')" \
+  'and legacy_block_end_marker the closing one'
+
+legacy="$sandbox/legacy-rc"
+printf '%s\n' 'first line' "$old_begin" 'OLD PAYLOAD' "$old_end" 'last line' >"$legacy"
+
+assert_ok 'has_block_in_file finds a pre-rename block' has_block_in_file "$legacy" ''
+assert_eq '1' "$(count_blocks_in_file "$legacy" '')" 'and it is counted as one block'
+
+printf 'NEW PAYLOAD\n' | ensure_block_in_file "$legacy" ''
+assert_eq '1' "$(grep -c '^# >>> linux-devops-tools >>>$' "$legacy")" \
+  'the block is re-fenced under the new tag'
+assert_eq '0' "$(grep -cF "$DEVENV_TAG_LEGACY" "$legacy")" 'no old fence is left behind'
+assert_eq '0' "$(grep -c 'OLD PAYLOAD' "$legacy")" 'and the old payload is replaced'
+assert_contains "$(cat "$legacy")" 'NEW PAYLOAD' 'with the new one'
+assert_eq '1' "$(grep -c 'first line' "$legacy")" 'the content before the block survives'
+assert_contains "$(cat "$legacy")" 'last line' 'and so does the content after it'
+
+# The removal path, from the old fences directly: this is `devenv uninstall` on a
+# box that has not re-run the installer since the rename.
+printf '%s\n' 'first line' "$old_begin" 'OLD' "$old_end" >"$legacy"
+remove_block_from_file "$legacy" ''
+assert_eq 'first line' "$(cat "$legacy")" 'remove_block_from_file deletes a pre-rename block'
+
 t_section 'ensure_block_in_file refuses an unterminated fence (never swallows the tail)'
 
 broken="$sandbox/broken"
 {
-  printf '# >>> devops-env-config >>>\n'
+  printf '# >>> linux-devops-tools >>>\n'
   printf 'half a block, no closing fence\n'
   printf 'important user content\n'
 } >"$broken"

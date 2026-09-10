@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ~/.bashrc.d/10-path.sh — devops-env-config :: PATH, computed exactly once.
+# ~/.bashrc.d/10-path.sh — linux-devops-tools :: PATH, computed exactly once.
 #
 # The pre-repo ~/.bashrc prepended $HOME/.local/bin three times, $HOME/.cargo/bin
 # twice and $GOPATH/bin twice. Every duplicate lengthens every PATH lookup and
