@@ -1,0 +1,108 @@
+# devops-env-config :: k9s skin :: danger-prod
+# PROD - every table cursor, crumb bar and border is red. STOP AND THINK.
+k9s:
+  body:
+    fgColor: '#e6e6e6'
+    bgColor: default
+    logoColor: '#ff4d4d'
+    logoColorMsg: '#a6adc8'
+    logoColorInfo: '#a6e3a1'
+    logoColorWarn: '#f9e2af'
+    logoColorError: '#f38ba8'
+  prompt:
+    fgColor: '#ff4d4d'
+    bgColor: default
+    suggestColor: '#ff4d4d'
+  info:
+    fgColor: '#ff4d4d'
+    sectionColor: '#a83232'
+    cpuColor: '#89dceb'
+    memColor: '#cba6f7'
+    k9sRevColor: '#6c7086'
+  help:
+    fgColor: '#cdd6f4'
+    bgColor: '#2a0d0d'
+    keyColor: '#ff4d4d'
+    numKeyColor: '#cba6f7'
+    sectionColor: '#a6e3a1'
+  dialog:
+    fgColor: '#cdd6f4'
+    bgColor: '#2a0d0d'
+    buttonFgColor: '#1a0000'
+    buttonBgColor: '#ff4d4d'
+    buttonFocusFgColor: '#1a0000'
+    buttonFocusBgColor: '#ffffff'
+    labelFgColor: '#ff4d4d'
+    fieldFgColor: '#cdd6f4'
+  frame:
+    border:
+      fgColor: '#a83232'
+      focusColor: '#ff4d4d'
+    menu:
+      fgColor: '#cdd6f4'
+      keyColor: '#ff4d4d'
+      numKeyColor: '#cba6f7'
+      fgStyle: normal
+    crumbs:
+      fgColor: '#1a0000'
+      bgColor: '#ff4d4d'
+      activeColor: '#ffffff'
+    status:
+      newColor: '#89dceb'
+      modifyColor: '#cba6f7'
+      addColor: '#a6e3a1'
+      pendingColor: '#fab387'
+      errorColor: '#f38ba8'
+      highlightColor: '#89b4fa'
+      killColor: '#f5c2e7'
+      completedColor: '#6c7086'
+    title:
+      fgColor: '#ff4d4d'
+      bgColor: default
+      highlightColor: '#ffffff'
+      counterColor: '#a6e3a1'
+      filterColor: '#f5c2e7'
+  views:
+    charts:
+      bgColor: default
+      dialBgColor: default
+      chartBgColor: default
+      defaultDialColors:
+      - '#a6e3a1'
+      - '#f38ba8'
+      defaultChartColors:
+      - '#a6e3a1'
+      - '#f38ba8'
+    table:
+      fgColor: '#cdd6f4'
+      bgColor: default
+      cursorFgColor: '#1a0000'
+      cursorBgColor: '#ff4d4d'
+      markColor: '#f9e2af'
+      header:
+        fgColor: '#a83232'
+        bgColor: default
+        sorterColor: '#f9e2af'
+        selectedSortColumnColor: '#a6e3a1'
+    xray:
+      fgColor: '#cdd6f4'
+      bgColor: default
+      cursorColor: '#ff4d4d'
+      cursorTextColor: '#11111b'
+      graphicColor: '#f9e2af'
+    yaml:
+      keyColor: '#ff4d4d'
+      colonColor: '#6c7086'
+      valueColor: '#cdd6f4'
+    picker:
+      mainColor: '#cdd6f4'
+      focusColor: '#ff4d4d'
+      shortcutColor: '#f9e2af'
+    logs:
+      fgColor: '#cdd6f4'
+      bgColor: default
+      indicator:
+        fgColor: '#ff4d4d'
+        bgColor: default
+        toggleOnColor: '#a6e3a1'
+        toggleOffColor: '#6c7086'

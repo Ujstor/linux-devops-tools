@@ -1,0 +1,418 @@
+#!/usr/bin/env bash
+# sso-login — trigger each tool's own web-login flow from a terminal-only box.
+# devops-env-config
+#
+#   sso-login [PROVIDER…]     k8s | azure | aks | gh | gitlab | argocd | bao | all
+#   sso-login --status        read-only: what is authenticated, and until when
+#   sso-login --list          what this host is configured for
+#
+# It stores NO credential of its own. Every flow below is the vendor CLI's own
+# login, writing to that CLI's own credential store. Real hostnames live only in
+# ~/.config/devops-env/sso.env (mode 0600, gitignored, never committed).
+#
+# It never edits a kubeconfig — that is `sso-kubeconfig-add`, on purpose.
+# `set -e` is deliberately OFF here: these shims probe several backends and a
+# failing probe must degrade to the next one, never abort the user's login flow.
+set -uo pipefail
+
+PROG=${0##*/}
+CONF_DIR="${DEVENV_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/devops-env}"
+CONF="$CONF_DIR/sso.env"
+
+say() { printf '%s\n' "$*" >&2; }
+err() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+show() { printf '  + %s\n' "$*" >&2; }
+
+usage() {
+  cat >&2 <<EOF
+usage: $PROG [PROVIDER…]      k8s azure aks gh gitlab argocd bao all
+       $PROG --status         read-only: who am I, everywhere
+       $PROG --list           what this host is configured for
+
+Settings come from $CONF (mode 0600, gitignored, never committed).
+devenv --only auth-sso  seeds that file from the shipped example and never
+overwrites it afterwards; fill in your issuer, client id and contexts there.
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# settings
+# ---------------------------------------------------------------------------
+
+load_conf() {
+  if [ -r "$CONF" ]; then
+    # shellcheck source=/dev/null
+    . "$CONF"
+  else
+    say "note: $CONF is missing — only the flows that need no settings will run."
+  fi
+}
+
+# need_conf VAR PROVIDER — 0 when VAR is set and non-empty, else explain and 1.
+need_conf() {
+  local var=$1 provider=$2
+  if [ -n "${!var:-}" ]; then return 0; fi
+  err "$provider needs $var, which is not set in $CONF"
+  err "  add:  $var=\"…\"      (see config/sso/sso.env.example in the repo)"
+  return 1
+}
+
+# host_mode — wsl | gui | print. The shim is the single source of truth.
+host_mode() {
+  if command -v open-url >/dev/null 2>&1; then
+    open-url --mode 2>/dev/null || printf 'print\n'
+  else
+    printf 'print\n'
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# results
+# ---------------------------------------------------------------------------
+
+RESULTS=()
+record() { RESULTS+=("$1"$'\t'"$2"); }
+
+print_results() {
+  [ ${#RESULTS[@]} -gt 0 ] || return 0
+  say ''
+  say 'result:'
+  local row
+  for row in "${RESULTS[@]}"; do
+    printf '  %-8s %s\n' "${row%%$'\t'*}" "${row#*$'\t'}" >&2
+  done
+}
+
+# ---------------------------------------------------------------------------
+# providers
+# ---------------------------------------------------------------------------
+
+# Keycloak -> kubectl. Warming the cache THROUGH the kubeconfig's own exec args is
+# what makes the token-cache key identical to a plain `kubectl` call. Never call
+# `oidc-login get-token` directly: its stdout is an ExecCredential containing the
+# ID token, and that must not reach scrollback or a clipboard.
+do_k8s() {
+  command -v kubectl >/dev/null 2>&1 || {
+    err 'kubectl is not installed'
+    record k8s 'FAIL (no kubectl)'
+    return 1
+  }
+  local ctxs ctx rc=0 ok=0 bad=0
+  ctxs=${SSO_KUBE_CONTEXTS:-}
+  if [ -z "$ctxs" ]; then
+    ctxs=$(kubectl config current-context 2>/dev/null) || ctxs=''
+    [ -n "$ctxs" ] || {
+      err 'no current kube context, and SSO_KUBE_CONTEXTS is unset'
+      record k8s 'FAIL (no context)'
+      return 1
+    }
+  fi
+  for ctx in $ctxs; do
+    say "k8s: $ctx"
+    show "kubectl auth whoami --context $ctx"
+    if kubectl auth whoami --context "$ctx"; then
+      ok=$((ok + 1))
+      continue
+    fi
+    # Older API servers have no SelfSubjectReview: fall back to a plain call,
+    # which still runs the exec plugin and still warms the same cache entry.
+    show "kubectl --context $ctx cluster-info   (server has no auth whoami)"
+    if kubectl --context "$ctx" cluster-info >/dev/null; then
+      ok=$((ok + 1))
+    else
+      bad=$((bad + 1))
+      rc=1
+    fi
+  done
+  record k8s "$ok ok, $bad failed"
+  return "$rc"
+}
+
+do_azure() {
+  command -v az >/dev/null 2>&1 || {
+    err 'az is not installed (45-cloud installs it)'
+    record azure 'FAIL (no az)'
+    return 1
+  }
+  local args=(login)
+  if [ "$(host_mode)" = print ]; then
+    # az reads $BROWSER through python webbrowser; can_launch_browser() returning
+    # True SUPPRESSES az's own device-code fallback and starts an authcode flow on
+    # a random loopback port that nothing can tunnel. Put the fallback back.
+    args+=(--use-device-code)
+  fi
+  show "az ${args[*]}"
+  if command az "${args[@]}"; then
+    record azure ok
+    return 0
+  fi
+  record azure FAIL
+  return 1
+}
+
+do_aks() {
+  command -v kubelogin >/dev/null 2>&1 || {
+    err 'kubelogin (Azure/kubelogin) is not installed'
+    record aks 'FAIL (no kubelogin)'
+    return 1
+  }
+  if ! kubelogin convert-kubeconfig --help >/dev/null 2>&1; then
+    # shellcheck disable=SC2016  # backticks and GOPATH are prose, not substitutions
+    err 'the `kubelogin` on PATH is int128/kubelogin, not Azure/kubelogin.'
+    err '  fix:  go install github.com/Azure/kubelogin/cmd/kubelogin@latest'
+    # shellcheck disable=SC2016
+    err '  int128 belongs in krew only (kubectl oidc-login), never in $GOPATH/bin.'
+    record aks 'FAIL (wrong kubelogin)'
+    return 1
+  fi
+  # --context is MANDATORY: without it, EVERY context using azure auth or an exec
+  # plugin is rewritten, which on a multi-cluster kubeconfig is a footgun.
+  need_conf SSO_AKS_CONTEXTS aks || {
+    record aks 'FAIL (SSO_AKS_CONTEXTS unset)'
+    return 1
+  }
+  local ctx rc=0
+  for ctx in $SSO_AKS_CONTEXTS; do
+    show "kubelogin convert-kubeconfig -l azurecli --context $ctx"
+    kubelogin convert-kubeconfig -l azurecli --context "$ctx" || rc=1
+  done
+  if [ "$rc" = 0 ]; then record aks ok; else record aks FAIL; fi
+  return "$rc"
+}
+
+do_gh() {
+  command -v gh >/dev/null 2>&1 || {
+    err 'gh is not installed'
+    record gh 'FAIL (no gh)'
+    return 1
+  }
+  if gh auth status >/dev/null 2>&1; then
+    gh auth status
+    record gh ok
+    return 0
+  fi
+  # gh's login is a multi-prompt wizard that wants the raw terminal, and it
+  # detects SSH/CI/Codespaces and switches to device code by itself. Printing the
+  # command is deliberate: wrapping it would only get in the way.
+  say 'gh is not authenticated. Run:'
+  show 'gh auth login            # pick HTTPS, then "Login with a web browser"'
+  say '  the shim opens the URL on WSL, or prints it to paste on your laptop.'
+  record gh 'not authenticated'
+  return 1
+}
+
+do_gitlab() {
+  command -v glab >/dev/null 2>&1 || {
+    err 'glab is not installed (45-cloud installs it)'
+    record gitlab 'FAIL (no glab)'
+    return 1
+  }
+  if glab auth status >/dev/null 2>&1; then
+    glab auth status
+    record gitlab ok
+    return 0
+  fi
+  need_conf GITLAB_HOST gitlab || {
+    record gitlab 'FAIL (GITLAB_HOST unset)'
+    return 1
+  }
+  # --device is a first-class flag in glab (unlike gh): no callback, no tunnel.
+  show "glab auth login --hostname $GITLAB_HOST --device"
+  if glab auth login --hostname "$GITLAB_HOST" --device; then
+    record gitlab ok
+    return 0
+  fi
+  record gitlab FAIL
+  return 1
+}
+
+do_argocd() {
+  command -v argocd >/dev/null 2>&1 || {
+    err 'argocd is not installed (35-kubernetes installs it)'
+    record argocd 'FAIL (no argocd)'
+    return 1
+  }
+  local mode=${SSO_ARGOCD_MODE:-core}
+  if [ "$mode" = core ]; then
+    # Core mode talks to the Argo CD API through the kubeconfig you already
+    # authenticated with Keycloak — no Argo CD session, no callback, no port.
+    # $ARGOCD_SERVER is deliberately unused here.
+    show 'argocd login --core'
+    if argocd login --core; then
+      record argocd 'ok (core)'
+      return 0
+    fi
+    record argocd 'FAIL (core)'
+    return 1
+  fi
+  need_conf ARGOCD_SERVER argocd || {
+    record argocd 'FAIL (ARGOCD_SERVER unset)'
+    return 1
+  }
+  local args=("$ARGOCD_SERVER" --sso --grpc-web)
+  if [ "$(host_mode)" = print ]; then
+    args+=(--sso-launch-browser=false)
+    say 'headless: from your laptop, first open  ssh -L 8085:localhost:8085 <user>@<this-host>'
+  fi
+  show "argocd login ${args[*]}"
+  if argocd login "${args[@]}"; then
+    record argocd 'ok (sso)'
+    return 0
+  fi
+  record argocd 'FAIL (sso)'
+  return 1
+}
+
+do_bao() {
+  command -v bao >/dev/null 2>&1 || {
+    err 'bao (OpenBao) is not installed (40-iac installs it)'
+    record bao 'FAIL (no bao)'
+    return 1
+  }
+  need_conf BAO_ROLE bao || {
+    record bao 'FAIL (BAO_ROLE unset)'
+    return 1
+  }
+  if [ -n "${BAO_ADDR:-}" ]; then export BAO_ADDR; fi
+  local args=(login -method=oidc "role=$BAO_ROLE")
+  if [ "$(host_mode)" = print ]; then
+    # OpenBao's device flow needs no callback and no redirect URI at all: the
+    # cleanest headless path there is.
+    args+=(callbackmode=device)
+  fi
+  show "bao ${args[*]}"
+  if bao "${args[@]}"; then
+    record bao ok
+    return 0
+  fi
+  record bao FAIL
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# --status / --list
+# ---------------------------------------------------------------------------
+
+status_all() {
+  local n
+  say "host mode: $(host_mode)"
+  for n in kubectl az gh glab argocd bao; do
+    command -v "$n" >/dev/null 2>&1 || continue
+    say ''
+    case "$n" in
+      kubectl)
+        say '--- kubectl auth whoami'
+        kubectl auth whoami 2>&1 | sed 's/^/  /' >&2
+        ;;
+      az)
+        say '--- az account show'
+        az account show --query '{name:name, user:user.name, tenant:tenantId}' -o tsv 2>&1 \
+          | sed 's/^/  /' >&2
+        ;;
+      gh)
+        say '--- gh auth status'
+        gh auth status 2>&1 | sed 's/^/  /' >&2
+        ;;
+      glab)
+        say '--- glab auth status'
+        glab auth status 2>&1 | sed 's/^/  /' >&2
+        ;;
+      argocd)
+        say '--- argocd account get-user-info'
+        argocd account get-user-info 2>&1 | sed 's/^/  /' >&2
+        ;;
+      bao)
+        say '--- bao token lookup'
+        bao token lookup -format=table 2>&1 | grep -vi '^id ' | sed 's/^/  /' >&2
+        ;;
+    esac
+  done
+  return 0
+}
+
+list_conf() {
+  local present='(MISSING)'
+  [ -r "$CONF" ] && present='(present)'
+  say "settings file : $CONF $present"
+  say "host mode     : $(host_mode)"
+  say "kube contexts : ${SSO_KUBE_CONTEXTS:-<current context only>}"
+  say "aks contexts  : ${SSO_AKS_CONTEXTS:-<unset>}"
+  say "argocd        : ${ARGOCD_SERVER:-<unset>} (mode ${SSO_ARGOCD_MODE:-core})"
+  say "openbao       : ${BAO_ADDR:-<unset>} role ${BAO_ROLE:-<unset>}"
+  say "gitlab        : ${GITLAB_HOST:-<unset>}"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+main() {
+  local providers=() rc=0 p
+  case "${1:-}" in
+    -h | --help)
+      usage
+      return 0
+      ;;
+    --status)
+      load_conf
+      status_all
+      return 0
+      ;;
+    --list)
+      load_conf
+      list_conf
+      return 0
+      ;;
+  esac
+
+  load_conf
+  if [ $# -eq 0 ]; then
+    usage
+    return 2
+  fi
+  for p in "$@"; do
+    case "$p" in
+      k8s | kube | kubernetes) providers+=(k8s) ;;
+      azure | az) providers+=(azure) ;;
+      aks) providers+=(aks) ;;
+      gh | github) providers+=(gh) ;;
+      gitlab | glab) providers+=(gitlab) ;;
+      argocd | argo) providers+=(argocd) ;;
+      bao | openbao | vault) providers+=(bao) ;;
+      all)
+        providers+=(k8s)
+        if [ -n "${SSO_AKS_CONTEXTS:-}" ]; then providers+=(azure aks); fi
+        if command -v gh >/dev/null 2>&1; then providers+=(gh); fi
+        if [ -n "${GITLAB_HOST:-}" ]; then providers+=(gitlab); fi
+        if [ -n "${ARGOCD_SERVER:-}" ] || [ "${SSO_ARGOCD_MODE:-core}" = core ]; then
+          providers+=(argocd)
+        fi
+        if [ -n "${BAO_ROLE:-}" ]; then providers+=(bao); fi
+        ;;
+      *)
+        err "unknown provider '$p'"
+        usage
+        return 2
+        ;;
+    esac
+  done
+
+  say "host mode: $(host_mode)  (open-url decides; DEVENV_BROWSER_MODE overrides)"
+  for p in "${providers[@]}"; do
+    say ''
+    case "$p" in
+      k8s) do_k8s || rc=1 ;;
+      azure) do_azure || rc=1 ;;
+      aks) do_aks || rc=1 ;;
+      gh) do_gh || rc=1 ;;
+      gitlab) do_gitlab || rc=1 ;;
+      argocd) do_argocd || rc=1 ;;
+      bao) do_bao || rc=1 ;;
+    esac
+  done
+  print_results
+  return "$rc"
+}
+
+main "$@"

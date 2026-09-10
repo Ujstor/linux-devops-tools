@@ -1,0 +1,79 @@
+# devops-env-config :: k9s plugins :: helm
+# NOTE: k9s already binds <v> Values and <r> Releases in the helm view,
+#       and <r> RollBackTo... in the release-history view.
+plugins:
+  helm-diff-previous:
+    shortCut: Shift-D
+    description: Diff vs previous revision
+    scopes: [helm]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; rel="$2"; ctx="$3"
+        cur="$(helm history "$rel" -n "$ns" --kube-context "$ctx" -o json | jq -r 'max_by(.revision).revision')"
+        prev=$((cur - 1))
+        if [ "$prev" -lt 1 ]; then echo "no previous revision"; read -r -p "press enter" _; exit 0; fi
+        helm diff revision "$rel" "$prev" "$cur" -n "$ns" --kube-context "$ctx" --color 2>&1 | less -R
+      - --
+      - $NAMESPACE
+      - $COL-NAME
+      - $CONTEXT
+
+  helm-all-values:
+    shortCut: Shift-U
+    description: All values (incl. defaults)
+    scopes: [helm]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        ns="$1"; rel="$2"; ctx="$3"
+        helm get values "$rel" -n "$ns" --kube-context "$ctx" --all 2>&1 | less -R
+      - --
+      - $NAMESPACE
+      - $COL-NAME
+      - $CONTEXT
+
+  helm-manifest:
+    shortCut: Shift-M
+    description: Rendered manifest
+    scopes: [helm]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        ns="$1"; rel="$2"; ctx="$3"
+        helm get manifest "$rel" -n "$ns" --kube-context "$ctx" 2>&1 | less -R
+      - --
+      - $NAMESPACE
+      - $COL-NAME
+      - $CONTEXT
+
+  helm-diff-revision:
+    shortCut: Shift-D
+    description: Diff this revision vs deployed
+    scopes: [history]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; sel="$2"; rev="$3"; ctx="$4"
+        rel="${sel%%:*}"
+        cur="$(helm history "$rel" -n "$ns" --kube-context "$ctx" -o json | jq -r '[.[]|select(.status=="deployed")]|max_by(.revision).revision')"
+        helm diff revision "$rel" "$rev" "$cur" -n "$ns" --kube-context "$ctx" --color 2>&1 | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $COL-REVISION
+      - $CONTEXT

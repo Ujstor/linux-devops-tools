@@ -1,0 +1,100 @@
+# devops-env-config :: k9s main config  (~/.config/k9s/config.yaml)
+#
+# HOW THIS FILE IS APPLIED (MUST-FIX C4)
+#   k9s OWNS this file: it rewrites it in full every time it exits, so it already
+#   exists on any machine k9s has ever run on, with every key at its default.
+#   A create-if-absent install would therefore never land a single setting.
+#   modules/37-k9s-config.sh installs it like this instead:
+#
+#     absent  -> write it verbatim (comments and all)
+#     present -> awk -f lib/awk/k9s-config-merge.awk <this file> <existing> >new
+#                i.e. every LEAF below is forced onto the existing file, any key
+#                this file does not mention is preserved untouched, and a missing
+#                key (older/newer k9s) is created with its parents.
+#
+#   The merge is idempotent: running it twice produces a byte-identical file.
+#   A key you want to own yourself must be deleted from THIS file, not from
+#   ~/.config/k9s/config.yaml — the next run would put it back.
+#   `K9S_KEEP_LOCAL=1 devenv run k9s-config` skips the merge entirely.
+#
+# Schema-checked against k9s v0.50.9 AND v0.51.0. Fields k9s 0.51 added
+# (ui.invert, logger.columnLock) are deliberately omitted so the same file
+# loads clean on 0.50.x; k9s writes them back itself on first exit if newer.
+k9s:
+  # Live YAML/describe views refresh themselves - handy for watching a rollout
+  # or an ExternalSecret converge without leaving the view.
+  liveViewAutoRefresh: true
+  gpuVendors: {}
+  refreshRate: 2
+  apiServerTimeout: 15s
+  # WAN/VPN links to a remote cluster drop; 5 retries rides that out.
+  maxConnRetry: 5
+  readOnly: false
+  noExitOnCtrlC: false
+  # k9s is installed from a pinned release, so the "new version" nag adds a
+  # GitHub round-trip on every start for nothing.
+  skipLatestRevCheck: true
+  disablePodCounting: false
+  # localhost is right on WSL2 (Windows localhostForwarding reaches it) and on
+  # a local VM. Set 0.0.0.0 only on a jump host you forward *through*.
+  portForwardAddress: localhost
+  defaultView: ""
+  ui:
+    enableMouse: false
+    headless: false
+    logoless: false
+    crumbsless: false
+    # skip the splash animation on every start
+    splashless: true
+    # hot-reload skin/aliases/plugins/hotkeys without restarting k9s,
+    # and re-colour on context switch. This is what makes the per-cluster
+    # danger skin flip the instant you ':ctx' into prod.
+    reactive: true
+    # a Nerd Font (font-symbols-only-nerd-font) is installed, so keep icons
+    noIcons: false
+    skin: devenv-dark
+    # logs / YAML / describe open full width - worth it on a wide terminal
+    defaultsToFullScreen: true
+    useFullGVRTitle: false
+  shellPod:
+    # was busybox:1.35.0 (2022, no curl/dig/tcpdump). netshoot is the standard
+    # k8s netdebug image, multi-arch (amd64+arm64) and carries the tools you
+    # actually need on a Cilium cluster: dig/drill, tcpdump, ss, iproute2,
+    # curl, jq, nmap, ethtool, conntrack.
+    image: nicolaka/netshoot:v0.16
+    namespace: default
+    tty: true
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    labels:
+      app.kubernetes.io/name: k9s-shell
+      app.kubernetes.io/managed-by: k9s
+      # PLACEHOLDER - change the domain to your own. This pod is hostPID /
+      # hostNetwork / privileged by design and will trip a restricted PSS or
+      # Kyverno policy, so give the policy something to exclude on.
+      debug.example.com/k9s-shell: "true"
+  imageScans:
+    enable: false
+    exclusions:
+      namespaces: []
+      labels: {}
+  logger:
+    # 100 is short for a Go service that logs a request per line
+    tail: 200
+    buffer: 5000
+    # -1 == tail from now. A positive value re-reads history on every open
+    # and is slow against a busy pod.
+    sinceSeconds: -1
+    # slog/JSON lines are long and the log view does not scroll sideways
+    textWrap: true
+    disableAutoscroll: false
+    # services stamp their own timestamps; k8s ones would just duplicate
+    showTime: false
+  thresholds:
+    cpu:
+      critical: 90
+      warn: 70
+    memory:
+      critical: 90
+      warn: 70

@@ -1,0 +1,241 @@
+# devops-env-config :: k9s plugins :: core (scope: all)
+#
+# Bound in EVERY view. Keys reserved here: Shift-Y E T B I G W Q.
+# `all` also binds in k9s's pseudo-views (containers, helm history, xray, ...)
+# where $RESOURCE_NAME is not an API resource, so the one destructive plugin in
+# this file resolves the object first and refuses when it cannot (MUST-FIX C9).
+# Nothing here writes a kubeconfig or secret material to /tmp (MUST-FIX S8):
+# the two plugins that need scratch space use $XDG_RUNTIME_DIR, 0700, and clean
+# up after themselves.
+plugins:
+  neat-yaml:
+    shortCut: Shift-Y
+    description: YAML (neat)
+    scopes: [all]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; res="$3"; grp="$4"; ctx="$5"
+        kind="$res"; [ -n "$grp" ] && kind="$res.$grp"
+        nsf=(); [ -n "$ns" ] && nsf=(-n "$ns")
+        kubectl get "$kind" "$name" --context "$ctx" "${nsf[@]}" -o yaml \
+          | kubectl neat \
+          | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $RESOURCE_GROUP
+      - $CONTEXT
+
+  events-watch:
+    shortCut: Shift-E
+    description: Events (watch)
+    scopes: [all]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; res="$3"; grp="$4"; ctx="$5"
+        kind="$res"; [ -n "$grp" ] && kind="$res.$grp"
+        nsf=(); [ -n "$ns" ] && nsf=(-n "$ns")
+        exec kubectl events --context "$ctx" "${nsf[@]}" --for "$kind/$name" --watch
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $RESOURCE_GROUP
+      - $CONTEXT
+
+  ownership-tree:
+    shortCut: Shift-T
+    description: Ownership tree
+    scopes: [all]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; res="$3"; grp="$4"; ctx="$5"
+        kind="$res"; [ -n "$grp" ] && kind="$res.$grp"
+        nsf=(); [ -n "$ns" ] && nsf=(-n "$ns")
+        kubectl tree "$kind" "$name" --context "$ctx" "${nsf[@]}" --color always | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $RESOURCE_GROUP
+      - $CONTEXT
+
+  copy-ref:
+    shortCut: Shift-B
+    description: Copy ref to clipboard
+    scopes: [all]
+    command: bash
+    background: true
+    confirm: false
+    overwriteOutput: true
+    args:
+      - -c
+      - |
+        # `clip` is the repo's own clipboard executable (~/.local/bin/clip,
+        # installed by the platform module). It picks the WSL / Wayland / X11 /
+        # OSC52 backend itself, so this plugin never calls clip.exe by bare name
+        # - Windows PATH is not on this shell's PATH.
+        ns="$1"; name="$2"; res="$3"; grp="$4"; ctx="$5"
+        kind="$res"; [ -n "$grp" ] && kind="$res.$grp"
+        ref="kubectl --context $ctx"
+        [ -n "$ns" ] && ref="$ref -n $ns"
+        ref="$ref get $kind $name"
+        clip=""
+        if command -v clip >/dev/null 2>&1; then clip=clip
+        elif [ -x "$HOME/.local/bin/clip" ]; then clip="$HOME/.local/bin/clip"
+        fi
+        if [ -n "$clip" ]; then
+          printf '%s' "$ref" | "$clip" && echo "copied: $ref"
+        else
+          echo "no clip executable - run: devenv run shell"
+          echo "$ref"
+        fi
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $RESOURCE_GROUP
+      - $CONTEXT
+
+  describe-editor:
+    shortCut: Shift-I
+    description: Describe in $EDITOR
+    scopes: [all]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; res="$3"; grp="$4"; ctx="$5"
+        kind="$res"; [ -n "$grp" ] && kind="$res.$grp"
+        nsf=(); [ -n "$ns" ] && nsf=(-n "$ns")
+        ed="${K9S_EDITOR:-${KUBE_EDITOR:-${EDITOR:-vi}}}"
+        td="${XDG_RUNTIME_DIR:-$HOME/.cache}/devenv-k9s"
+        mkdir -p "$td" && chmod 700 "$td" || exit 1
+        tmp="$(umask 077; mktemp "$td/describe-XXXXXX.txt")" || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        kubectl describe "$kind" "$name" --context "$ctx" "${nsf[@]}" >"$tmp" 2>&1
+        $ed "$tmp"
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $RESOURCE_GROUP
+      - $CONTEXT
+
+  owning-release:
+    shortCut: Shift-G
+    description: Owning Helm release
+    scopes: [all]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; res="$3"; grp="$4"; ctx="$5"
+        kind="$res"; [ -n "$grp" ] && kind="$res.$grp"
+        nsf=(); [ -n "$ns" ] && nsf=(-n "$ns")
+        json="$(kubectl get "$kind" "$name" --context "$ctx" "${nsf[@]}" -o json)" || exit 1
+        rel="$(printf '%s' "$json" | jq -r '.metadata.labels["app.kubernetes.io/instance"]
+                 // .metadata.annotations["meta.helm.sh/release-name"] // empty')"
+        rns="$(printf '%s' "$json" | jq -r '.metadata.annotations["meta.helm.sh/release-namespace"] // empty')"
+        [ -z "$rns" ] && rns="$ns"
+        argo="$(printf '%s' "$json" | jq -r '.metadata.labels["argocd.argoproj.io/instance"] // empty')"
+        {
+          echo "== resource: $kind/$name (ns=${ns:-cluster-scoped})"
+          [ -n "$argo" ] && echo "== argocd app: $argo"
+          if [ -n "$rel" ]; then
+            echo "== helm release: $rel (ns=$rns)"; echo
+            helm history "$rel" -n "$rns" --kube-context "$ctx" 2>&1
+            echo; echo "== user-supplied values =="
+            helm get values "$rel" -n "$rns" --kube-context "$ctx" 2>&1
+          else
+            echo "== no helm release label/annotation on this resource"
+          fi
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $RESOURCE_GROUP
+      - $CONTEXT
+
+  ctx-subshell:
+    shortCut: Shift-W
+    description: Shell in this ctx/ns
+    scopes: [all]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        # MUST-FIX S8: the minified kubeconfig carries credentials, so it is
+        # written 0600 into a private per-user runtime dir - never /tmp - and
+        # removed when the subshell exits.
+        ctx="$1"; ns="$2"
+        td="${XDG_RUNTIME_DIR:-$HOME/.cache}/devenv-k9s"
+        mkdir -p "$td" && chmod 700 "$td" || exit 1
+        kc="$(umask 077; mktemp "$td/kubeconfig-XXXXXX")" || exit 1
+        trap 'rm -f "$kc"' EXIT
+        kubectl config view --raw --minify --context "$ctx" >"$kc" || exit 1
+        [ -n "$ns" ] && kubectl --kubeconfig "$kc" config set-context --current --namespace "$ns" >/dev/null
+        echo "subshell pinned to context=$ctx namespace=${ns:-default} - 'exit' returns to k9s"
+        KUBECONFIG="$kc" bash -i
+      - --
+      - $CONTEXT
+      - $NAMESPACE
+
+  strip-finalizers:
+    shortCut: Shift-Q
+    description: Strip finalizers
+    scopes: [all]
+    dangerous: true
+    confirm: true
+    background: false
+    command: bash
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; res="$3"; grp="$4"; ctx="$5"
+        kind="$res"; [ -n "$grp" ] && kind="$res.$grp"
+        nsf=(); [ -n "$ns" ] && nsf=(-n "$ns")
+        # MUST-FIX C9: an `all`-scoped plugin also fires in k9s's pseudo-views
+        # (containers, helm history, xray, ...) where $RESOURCE_NAME is not an
+        # API resource and $NAME is a container / revision. Resolve the object
+        # before patching anything.
+        if [ -z "$res" ] || [ -z "$name" ] \
+          || ! kubectl get "$kind" "$name" --context "$ctx" "${nsf[@]}" -o name >/dev/null 2>&1; then
+          echo "refusing: $kind/$name is not an API object in this context"
+          echo "(this view is not a real resource view - nothing was changed)"
+          read -r -p "press enter" _
+          exit 1
+        fi
+        kubectl patch "$kind" "$name" --context "$ctx" "${nsf[@]}" \
+          --type merge -p '{"metadata":{"finalizers":null}}'
+        read -r -p "done - press enter" _
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $RESOURCE_GROUP
+      - $CONTEXT

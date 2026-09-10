@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# web — open a named bookmark (or a URL) through open-url.  devops-env-config
+#
+#   web <name>        look <name> up in ~/.config/devops-env/bookmarks
+#   web <url>         open a URL directly
+#   web --list        print the bookmark table
+#
+# The bookmarks file is `name<TAB>url`, mode 0600, gitignored: it is the second
+# and last place on this box that may contain a real hostname.
+# `set -e` is deliberately OFF here: these shims probe several backends and a
+# failing probe must degrade to the next one, never abort the user's login flow.
+set -uo pipefail
+
+PROG=${0##*/}
+CONF_DIR="${DEVENV_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/devops-env}"
+BOOKMARKS="${DEVENV_BOOKMARKS:-$CONF_DIR/bookmarks}"
+
+err() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+
+list() {
+  if [ ! -r "$BOOKMARKS" ]; then
+    err "no bookmarks file at $BOOKMARKS"
+    return 1
+  fi
+  awk -F'\t' '/^[[:space:]]*(#|$)/ { next } { printf "  %-12s %s\n", $1, $2 }' "$BOOKMARKS" >&2
+}
+
+lookup() {
+  [ -r "$BOOKMARKS" ] || return 1
+  awk -F'\t' -v n="$1" '
+    /^[[:space:]]*(#|$)/ { next }
+    $1 == n { print $2; found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$BOOKMARKS"
+}
+
+case "${1:-}" in
+  '' | -h | --help)
+    printf 'usage: %s <name|url>\n       %s --list\n' "$PROG" "$PROG" >&2
+    [ -r "$BOOKMARKS" ] && list
+    [ -z "${1:-}" ] && exit 2
+    exit 0
+    ;;
+  --list | -l)
+    list
+    exit $?
+    ;;
+esac
+
+case "$1" in
+  http://* | https://* | file://*)
+    exec open-url "$1"
+    ;;
+esac
+
+if url=$(lookup "$1") && [ -n "$url" ]; then
+  exec open-url "$url"
+fi
+
+err "no bookmark named '$1'"
+list || true
+exit 1

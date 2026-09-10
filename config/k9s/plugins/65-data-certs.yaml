@@ -1,0 +1,140 @@
+# devops-env-config :: k9s plugins :: Crunchy Postgres + cert-manager
+plugins:
+  pg-psql:
+    shortCut: Shift-C
+    description: psql on primary
+    scopes: [postgresclusters.postgres-operator.crunchydata.com]
+    dangerous: true
+    confirm: true
+    background: false
+    command: bash
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; ctx="$3"
+        pod="$(kubectl get pods --context "$ctx" -n "$ns" \
+                -l "postgres-operator.crunchydata.com/cluster=$name,postgres-operator.crunchydata.com/role=master" \
+                -o jsonpath='{.items[0].metadata.name}')"
+        if [ -z "$pod" ]; then echo "no primary pod found for $name"; read -r -p "press enter" _; exit 1; fi
+        echo "psql on $pod (primary of $name)"
+        kubectl exec -it "$pod" --context "$ctx" -n "$ns" -c database -- psql
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT
+
+  pg-status:
+    shortCut: Shift-M
+    description: Cluster status + instances
+    scopes: [postgresclusters.postgres-operator.crunchydata.com]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; ctx="$3"
+        {
+          kubectl get postgresclusters.postgres-operator.crunchydata.com "$name" \
+            --context "$ctx" -n "$ns" -o json \
+            | jq '{postgresVersion: .spec.postgresVersion,
+                   instances: .status.instances, conditions: .status.conditions,
+                   monitoring: .status.monitoring, pgbackrest: .status.pgbackrest,
+                   proxy: .status.proxy}'
+          echo; echo "== pods =="
+          kubectl get pods --context "$ctx" -n "$ns" \
+            -l "postgres-operator.crunchydata.com/cluster=$name" \
+            -L postgres-operator.crunchydata.com/role -o wide
+          echo; echo "== pvcs =="
+          kubectl get pvc --context "$ctx" -n "$ns" \
+            -l "postgres-operator.crunchydata.com/cluster=$name"
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT
+
+  pg-backup-log:
+    shortCut: Shift-H
+    description: pgBackRest info
+    scopes: [postgresclusters.postgres-operator.crunchydata.com]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; ctx="$3"
+        pod="$(kubectl get pods --context "$ctx" -n "$ns" \
+                -l "postgres-operator.crunchydata.com/cluster=$name,postgres-operator.crunchydata.com/role=master" \
+                -o jsonpath='{.items[0].metadata.name}')"
+        [ -z "$pod" ] && { echo "no primary pod"; read -r -p "press enter" _; exit 1; }
+        kubectl exec "$pod" --context "$ctx" -n "$ns" -c database -- pgbackrest info 2>&1 | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT
+
+  cert-status:
+    shortCut: Shift-M
+    description: Cert status + expiry
+    scopes: [certificates.cert-manager.io, certificaterequests.cert-manager.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        # s8-ok: reads .data["tls.crt"] only - the leaf certificate, which is
+        # public by construction and is what every browser already sees. The
+        # private key (tls.key) is never fetched, printed or decoded, so this
+        # stays available on a readOnly prod context.
+        set -o pipefail
+        ns="$1"; name="$2"; res="$3"; ctx="$4"
+        {
+          kubectl get "$res.cert-manager.io" "$name" --context "$ctx" -n "$ns" -o json \
+            | jq '{dnsNames: .spec.dnsNames, issuerRef: .spec.issuerRef,
+                   secretName: .spec.secretName, duration: .spec.duration,
+                   renewBefore: .spec.renewBefore,
+                   notBefore: .status.notBefore, notAfter: .status.notAfter,
+                   renewalTime: .status.renewalTime, conditions: .status.conditions}'
+          sec="$(kubectl get "$res.cert-manager.io" "$name" --context "$ctx" -n "$ns" \
+                  -o jsonpath='{.spec.secretName}' 2>/dev/null)"
+          if [ -n "$sec" ]; then
+            echo; echo "== x509 in secret/$sec =="
+            kubectl get secret "$sec" --context "$ctx" -n "$ns" -o jsonpath='{.data.tls\.crt}' 2>/dev/null \
+              | base64 -d | openssl x509 -noout -subject -issuer -dates -ext subjectAltName 2>&1
+          fi
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $CONTEXT
+
+  cert-renew:
+    shortCut: Shift-R
+    description: Force renew (needs cmctl)
+    scopes: [certificates.cert-manager.io]
+    dangerous: true
+    confirm: true
+    background: false
+    command: bash
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; ctx="$3"
+        if ! kubectl cert-manager version >/dev/null 2>&1; then
+          echo "kubectl-cert_manager not installed."
+          echo "  kubectl krew install cert-manager"
+          read -r -p "press enter" _; exit 1
+        fi
+        kubectl cert-manager renew "$name" --context "$ctx" -n "$ns"
+        read -r -p "press enter" _
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT

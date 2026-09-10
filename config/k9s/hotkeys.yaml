@@ -1,0 +1,70 @@
+# devops-env-config :: k9s hotkeys  (~/.config/k9s/hotkeys.yaml)
+#
+# KEY SPACE (MUST-FIX C2 - do not go back to Shift-<digit>)
+#   k9s resolves a shortCut through tcell.KeyNames, where "Shift-1" is the
+#   US-layout rune '!' (KeyShift1 = 33), "Shift-7" is '&', "Shift-2" is '@'.
+#   On a German keyboard Shift-7 types '/' and Shift-2 types '"', so those
+#   hotkeys either do nothing or - Shift-7 - land on k9s's own filter key.
+#   F-keys carry no layout at all and k9s binds none of them, so the whole
+#   block lives on F2-F9 + F12:
+#       F1  is Help in GTK terminals, F10 opens their menubar and F11 is
+#       fullscreen in Windows Terminal, so those three are left alone.
+#   The one exception is Shift-L: the letter keys k9s core leaves free are
+#   L, V and X, this file takes L (ciLium) and the plugins take V.
+#
+# Hotkeys bind in EVERY view, on top of the plugins, and k9s SKIPS a hotkey
+# whose key is already bound unless `override: true` - so a key here must not
+# appear in config/k9s/plugins/**. tests/k9s-keys.sh proves that.
+#
+# keepHistory: true keeps the view stack so <Esc> / '[' still walk back.
+hotKeys:
+  contexts:
+    shortCut: F2
+    description: Switch context
+    command: ctx
+    keepHistory: true
+  workloads:
+    shortCut: F3
+    description: Workloads (all ns)
+    command: wk all
+    keepHistory: true
+  pods-all:
+    shortCut: F4
+    description: Pods (all ns)
+    command: pod all
+    keepHistory: true
+  nodes:
+    shortCut: F5
+    description: Nodes
+    command: node
+    keepHistory: true
+  events:
+    shortCut: F6
+    description: Events (all ns)
+    command: events all
+    keepHistory: true
+  helm-releases:
+    shortCut: F7
+    description: Helm releases
+    command: helm all
+    keepHistory: true
+  argo-apps:
+    shortCut: F8
+    description: Argo CD applications
+    command: applications argocd
+    keepHistory: true
+  external-secrets:
+    shortCut: F9
+    description: ExternalSecrets (all ns)
+    command: externalsecrets all
+    keepHistory: true
+  policy-reports:
+    shortCut: F12
+    description: Kyverno policy reports
+    command: policyreports all
+    keepHistory: true
+  cilium-policies:
+    shortCut: Shift-L
+    description: Cilium network policies
+    command: ciliumnetworkpolicies all
+    keepHistory: true

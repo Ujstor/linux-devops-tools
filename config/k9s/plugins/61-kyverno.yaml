@@ -1,0 +1,84 @@
+# devops-env-config :: k9s plugins :: Kyverno
+# Keys: Shift-M on the policy/report views, Shift-V on a plain workload.
+plugins:
+  kyverno-policy-reports:
+    shortCut: Shift-M
+    description: Reports for this policy
+    scopes: [clusterpolicies.kyverno.io, policies.kyverno.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        name="$1"; ctx="$2"
+        {
+          echo "== fail/warn/error results for policy: $name =="
+          printf '%-22s %-34s %-26s %-8s %s\n' NAMESPACE RESOURCE RULE RESULT MESSAGE
+          for k in policyreports clusterpolicyreports; do
+            kubectl get "$k" -A --context "$ctx" -o json 2>/dev/null \
+              | jq -r --arg p "$name" '
+                  .items[]? as $r | $r.results[]?
+                  | select(.policy == $p and (.result | IN("fail","warn","error")))
+                  | [ ($r.metadata.namespace // "-"),
+                      ((.resources[0].kind // "?") + "/" + (.resources[0].name // "?")),
+                      (.rule // "-"), .result, (.message // "" | .[0:60]) ]
+                  | @tsv' \
+              | awk -F'\t' '{printf "%-22s %-34s %-26s %-8s %s\n",$1,$2,$3,$4,$5}'
+          done
+          echo; echo "== policy spec =="
+          kubectl get clusterpolicies.kyverno.io "$name" --context "$ctx" -o yaml 2>/dev/null | kubectl neat || true
+        } | less -R
+      - --
+      - $NAME
+      - $CONTEXT
+
+  kyverno-report-failures:
+    shortCut: Shift-M
+    description: Failing results in report
+    scopes: [policyreports.wgpolicyk8s.io, clusterpolicyreports.wgpolicyk8s.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; res="$3"; ctx="$4"
+        nsf=(); [ -n "$ns" ] && nsf=(-n "$ns")
+        kubectl get "$res" "$name" --context "$ctx" "${nsf[@]}" -o json \
+          | jq -r '.results[]? | select(.result | IN("fail","warn","error"))
+                   | "[\(.result|ascii_upcase)] \(.policy)/\(.rule // "-")\n    \(.resources[0].kind // "?")/\(.resources[0].name // "?")\n    \(.message // "")\n"' \
+          | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $CONTEXT
+
+  kyverno-resource-verdicts:
+    # MUST-FIX C1: was Shift-P, which k9s core takes for "Sort Namespace" in
+    # every all-namespace view (ui_table.go doUpdate) - k9s skips a plugin whose
+    # key is already bound, so this one fired only in single-namespace views.
+    # Shift-V is free in k9s core and in every other file here.
+    shortCut: Shift-V
+    description: Kyverno verdicts for this resource
+    scopes: [pods, deployments, statefulsets, daemonsets, ingresses, services, configmaps]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; ctx="$3"
+        kubectl get policyreports -n "$ns" --context "$ctx" -o json 2>/dev/null \
+          | jq -r --arg n "$name" '
+              .items[]?.results[]? | select(any(.resources[]?; .name == $n))
+              | "[\(.result|ascii_upcase)] \(.policy)/\(.rule // "-")  \(.message // "")"' \
+          | sort | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT

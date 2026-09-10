@@ -1,0 +1,70 @@
+# devops-env-config :: k9s plugins :: workloads (dp/sts/ds)
+# NOTE: k9s already binds <r> Restart, <s> Scale, <i> Set Image, <Shift-J> Jump Owner here.
+plugins:
+  stern-workload:
+    shortCut: Ctrl-L
+    description: Stern (whole workload)
+    scopes: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; res="$3"; ctx="$4"
+        sel="$(kubectl get "$res" "$name" --context "$ctx" -n "$ns" \
+                 -o go-template='{{range $k,$v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}' 2>/dev/null)"
+        sel="${sel%,}"
+        if [ -n "$sel" ]; then
+          exec kubectl stern --context "$ctx" -n "$ns" --selector "$sel" \
+            --tail 200 --color=always --timestamps=short --container-state=all
+        fi
+        exec kubectl stern --context "$ctx" -n "$ns" "$name" \
+          --tail 200 --color=always --timestamps=short --container-state=all
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $CONTEXT
+
+  rollout-status:
+    shortCut: Shift-R
+    description: Rollout status (watch)
+    scopes: [deployments, statefulsets, daemonsets]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; res="$3"; ctx="$4"
+        kubectl rollout status "$res/$name" --context "$ctx" -n "$ns" --timeout 10m
+        echo; kubectl rollout history "$res/$name" --context "$ctx" -n "$ns"
+        read -r -p "press enter" _
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $CONTEXT
+
+  rollout-undo:
+    shortCut: Shift-U
+    description: Rollout undo
+    scopes: [deployments, statefulsets, daemonsets]
+    dangerous: true
+    confirm: true
+    background: false
+    command: bash
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; res="$3"; ctx="$4"
+        kubectl rollout history "$res/$name" --context "$ctx" -n "$ns"
+        kubectl rollout undo "$res/$name" --context "$ctx" -n "$ns"
+        read -r -p "press enter" _
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $CONTEXT

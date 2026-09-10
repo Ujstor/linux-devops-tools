@@ -1,0 +1,140 @@
+# devops-env-config :: k9s plugins :: Argo CD + External Secrets
+# kubectl-only: no argocd CLI login required.
+plugins:
+  argo-refresh:
+    shortCut: Shift-R
+    description: Hard refresh app
+    scopes: [applications.argoproj.io]
+    # writes an annotation, so k9s must drop it on a readOnly (prod) context
+    dangerous: true
+    background: true
+    confirm: false
+    overwriteOutput: true
+    command: kubectl
+    args:
+      - annotate
+      - applications.argoproj.io
+      - --context
+      - $CONTEXT
+      - -n
+      - $NAMESPACE
+      - $NAME
+      - argocd.argoproj.io/refresh=hard
+      - --overwrite
+
+  argo-status:
+    shortCut: Shift-M
+    description: Sync + health detail
+    scopes: [applications.argoproj.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; ctx="$3"
+        kubectl get applications.argoproj.io "$name" --context "$ctx" -n "$ns" -o json \
+          | jq -r '
+              "app: \(.metadata.name)   project: \(.spec.project)",
+              "dest: \(.spec.destination.server // .spec.destination.name) / \(.spec.destination.namespace // "-")",
+              "source: \(.spec.source.repoURL // (.spec.sources//[]|map(.repoURL)|join(",")))",
+              "revision: \(.status.sync.revision // "-")",
+              "sync: \(.status.sync.status)   health: \(.status.health.status)   \(.status.health.message // "")",
+              "",
+              "== conditions ==",
+              ((.status.conditions // []) | map("[\(.type)] \(.message)") | join("\n")),
+              "",
+              "== out-of-sync / unhealthy resources ==",
+              ((.status.resources // [])
+                | map(select((.status // "Synced") != "Synced" or ((.health.status // "Healthy") != "Healthy")))
+                | map("\(.kind)/\(.name) ns=\(.namespace // "-") sync=\(.status // "-") health=\(.health.status // "-")")
+                | join("\n"))' \
+          | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT
+
+  argo-toggle-autosync:
+    shortCut: Shift-U
+    description: Toggle automated sync
+    scopes: [applications.argoproj.io]
+    dangerous: true
+    confirm: true
+    background: false
+    command: bash
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; ctx="$3"
+        auto="$(kubectl get applications.argoproj.io "$name" --context "$ctx" -n "$ns" \
+                 -o jsonpath='{.spec.syncPolicy.automated}')"
+        if [ -n "$auto" ]; then
+          echo "disabling automated sync on $name"
+          kubectl patch applications.argoproj.io "$name" --context "$ctx" -n "$ns" \
+            --type json -p '[{"op":"remove","path":"/spec/syncPolicy/automated"}]'
+        else
+          echo "enabling automated sync (prune + selfHeal) on $name"
+          kubectl patch applications.argoproj.io "$name" --context "$ctx" -n "$ns" \
+            --type merge -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
+        fi
+        read -r -p "press enter" _
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT
+
+  eso-force-sync:
+    shortCut: Shift-R
+    description: Force sync ExternalSecret
+    scopes: [externalsecrets.external-secrets.io, pushsecrets.external-secrets.io]
+    # writes an annotation, so k9s must drop it on a readOnly (prod) context
+    dangerous: true
+    background: true
+    confirm: false
+    overwriteOutput: true
+    command: bash
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; res="$3"; ctx="$4"
+        kubectl annotate "$res.external-secrets.io" "$name" --context "$ctx" -n "$ns" \
+          "force-sync=$(date +%s)" --overwrite
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $CONTEXT
+
+  eso-status:
+    shortCut: Shift-M
+    description: ESO status + target keys
+    scopes: [externalsecrets.external-secrets.io, secretstores.external-secrets.io, clustersecretstores.external-secrets.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; res="$3"; ctx="$4"
+        nsf=(); [ -n "$ns" ] && nsf=(-n "$ns")
+        {
+          kubectl get "$res.external-secrets.io" "$name" --context "$ctx" "${nsf[@]}" -o json \
+            | jq '{spec: .spec, conditions: .status.conditions, refreshTime: .status.refreshTime,
+                   binding: .status.binding, capabilities: .status.capabilities}'
+          if [ "$res" = "externalsecrets" ]; then
+            tgt="$(kubectl get externalsecrets.external-secrets.io "$name" --context "$ctx" -n "$ns" \
+                    -o jsonpath='{.spec.target.name}')"
+            [ -z "$tgt" ] && tgt="$name"
+            echo; echo "== target secret keys: $tgt =="
+            kubectl get secret "$tgt" --context "$ctx" -n "$ns" -o json 2>/dev/null \
+              | jq -r '.data // {} | keys[]' || echo "(target secret not created yet)"
+          fi
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $CONTEXT
