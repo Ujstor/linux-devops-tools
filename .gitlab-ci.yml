@@ -1,0 +1,10 @@
+---
+# devops/misc/linux-devops-tools — the whole .gitlab-ci.yml.
+#
+# Every gate lives in the component; this file only says which run.
+# The GitHub Actions workflow in .github/workflows/ci.yml stays as it
+# is — both CIs call the same make targets, so neither can drift from
+# a developer's laptop.
+include:
+  - component: $CI_SHELL@1.0.0
+  - component: $CI_CLEANUP_ARTIFACTS@0.2.2
