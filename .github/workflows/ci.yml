@@ -1,0 +1,226 @@
+name: ci
+
+# What CI is for here, in order of how often it saves someone:
+#
+#   privacy    this repository is public; nothing from a real estate may land in it
+#   container  the installer runs twice on every supported distribution and the
+#              second run must change nothing
+#   policy     the rules shellcheck cannot express (one mutation gate, one apt
+#              policy, no pin outside versions.env)
+#   lint       shellcheck and shfmt
+#   unit       the library's own behaviour, with no network and no root
+#
+# Everything here is also a make target, so anything CI catches can be reproduced
+# locally with one command. There is no CI-only magic.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never wait for a prompt in a container.
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  lint:
+    name: shellcheck + shfmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versions
+        run: |
+          shellcheck --version || true
+          docker --version || true
+
+      # `make check` is syntax + shellcheck + shfmt --diff. shfmt comes from a
+      # container when it is not on PATH, which is the case on the runner.
+      - name: make check
+        run: make check
+
+  policy:
+    name: policy rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # A rule that has stopped firing is worse than no rule, so the gate proves
+      # itself against synthetic violations before it judges the checkout.
+      - name: The rules still fire
+        run: bash tests/policy/rules.sh --self-test
+
+      - name: make lint-policy
+        run: make lint-policy
+
+  privacy:
+    name: public-repo gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The gate scans the working tree, and a shallow clone is all it needs.
+          fetch-depth: 1
+
+      # The gate matches on the SHAPE of a secret and never on a list of real
+      # values — a denylist naming what must not leak would itself be the leak,
+      # in a public file. So it is tested with synthetic violations instead.
+      - name: Every privacy rule still fires
+        run: bash tests/policy/privacy.sh --self-test
+
+      - name: make lint-privacy
+        run: make lint-privacy
+
+      - name: The old repository name is gone from every URL
+        run: bash tests/policy/rules.sh --rule old-name
+
+  yaml:
+    name: yaml
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet PyYAML
+
+      # Every shipped YAML file must parse. A k9s plugin file that does not is a
+      # k9s that refuses to start at all — its decoder rejects the whole file.
+      - name: Parse every YAML file in the checkout
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import sys
+
+          import yaml
+
+          root = pathlib.Path('.')
+          skip = {'.git', 'node_modules', '.cache'}
+          failed = []
+          checked = 0
+          for path in sorted(root.rglob('*')):
+              if not path.is_file() or path.suffix not in ('.yaml', '.yml'):
+                  continue
+              if any(part in skip for part in path.parts):
+                  continue
+              try:
+                  list(yaml.safe_load_all(path.read_text(encoding='utf-8')))
+                  checked += 1
+              except Exception as exc:                      # noqa: BLE001
+                  failed.append((path, exc))
+
+          for path, exc in failed:
+              print(f'INVALID {path}: {exc}', file=sys.stderr)
+          print(f'{checked} YAML file(s) parsed, {len(failed)} invalid')
+          sys.exit(1 if failed else 0)
+          PY
+
+      - name: make lint-k9s
+        run: make lint-k9s
+
+  unit:
+    name: unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: make test-unit
+        run: make test-unit
+
+  bootstrap:
+    name: curl | bash survives
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # MUST-FIX S1: under `bash -s` the BASH_SOURCE array is EMPTY, so an
+      # unguarded ${BASH_SOURCE[0]} under `set -u` is fatal before the script
+      # prints a single line. This is the shape a real user runs.
+      - name: cat install.sh | bash -s -- --help
+        run: cat install.sh | bash -s -- --help
+
+      # The same thing with no controlling terminal at all, which is how it runs
+      # from cloud-init, a Dockerfile or a provisioning pipeline.
+      - name: The same with no tty
+        run: setsid bash -c 'cat install.sh | bash -s -- --help' </dev/null
+
+  container:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: ${{ matrix.soft || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:12
+          - image: debian:13
+          - image: ubuntu:22.04
+          - image: ubuntu:24.04
+          # Not a supported target yet: it runs, and it is allowed to fail.
+          - image: ubuntu:26.04
+            soft: true
+    steps:
+      - uses: actions/checkout@v4
+
+      # tests/docker/entry.sh fingerprints the filesystem BEFORE the dry run,
+      # again after it, then installs twice and diffs. See its header for the
+      # order — it is the whole point of the test.
+      - name: Install twice on ${{ matrix.image }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -e SRC=/src \
+            -e PROFILE=minimal \
+            -e DRY_PROFILE=ci \
+            "${{ matrix.image }}" \
+            bash /src/tests/docker/entry.sh
+
+  # A single required check to point branch protection at, so adding a job later
+  # does not mean editing the protection rules.
+  ci-ok:
+    name: ci
+    runs-on: ubuntu-latest
+    needs: [lint, policy, privacy, yaml, unit, bootstrap, container]
+    if: always()
+    steps:
+      - name: Fail if anything above failed
+        run: |
+          printf 'lint=%s policy=%s privacy=%s yaml=%s unit=%s bootstrap=%s container=%s\n' \
+            '${{ needs.lint.result }}' \
+            '${{ needs.policy.result }}' \
+            '${{ needs.privacy.result }}' \
+            '${{ needs.yaml.result }}' \
+            '${{ needs.unit.result }}' \
+            '${{ needs.bootstrap.result }}' \
+            '${{ needs.container.result }}'
+          for r in \
+            '${{ needs.lint.result }}' \
+            '${{ needs.policy.result }}' \
+            '${{ needs.privacy.result }}' \
+            '${{ needs.yaml.result }}' \
+            '${{ needs.unit.result }}' \
+            '${{ needs.bootstrap.result }}' \
+            '${{ needs.container.result }}'; do
+            case "$r" in
+              success | skipped) ;;
+              *) exit 1 ;;
+            esac
+          done
