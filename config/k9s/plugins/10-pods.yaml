@@ -1,0 +1,163 @@
+# devops-env-config :: k9s plugins :: pods & containers
+plugins:
+  stern-pod:
+    shortCut: Ctrl-L
+    description: Stern (pod + all containers)
+    scopes: [pods]
+    command: kubectl
+    background: false
+    confirm: false
+    args:
+      - stern
+      - --context
+      - $CONTEXT
+      - -n
+      - $NAMESPACE
+      - --tail
+      - "200"
+      - --color=always
+      - --timestamps=short
+      - --container-state=all
+      - ^$NAME$
+
+  stern-container:
+    shortCut: Ctrl-L
+    description: Stern (this container)
+    scopes: [containers]
+    command: kubectl
+    background: false
+    confirm: false
+    args:
+      - stern
+      - --context
+      - $CONTEXT
+      - -n
+      - $NAMESPACE
+      - --tail
+      - "200"
+      - --color=always
+      - --timestamps=short
+      - --container-state=all
+      - -c
+      - ^$NAME$
+      - ^$POD$
+
+  debug-pod:
+    shortCut: Shift-D
+    description: Debug (ephemeral netshoot)
+    scopes: [pods]
+    dangerous: true
+    confirm: true
+    background: false
+    command: kubectl
+    args:
+      - debug
+      - -it
+      - --context
+      - $CONTEXT
+      - -n
+      - $NAMESPACE
+      - --image
+      - nicolaka/netshoot:v0.16
+      - --profile
+      - general
+      - --share-processes
+      - $NAME
+      - --
+      - /bin/bash
+
+  debug-container:
+    shortCut: Shift-D
+    description: Debug (target this container)
+    scopes: [containers]
+    dangerous: true
+    confirm: true
+    background: false
+    command: kubectl
+    args:
+      - debug
+      - -it
+      - --context
+      - $CONTEXT
+      - -n
+      - $NAMESPACE
+      - --image
+      - nicolaka/netshoot:v0.16
+      - --profile
+      - general
+      - --target
+      - $NAME
+      - $POD
+      - --
+      - /bin/bash
+
+  force-delete-pod:
+    shortCut: Shift-K
+    description: Force delete (grace 0)
+    scopes: [pods]
+    dangerous: true
+    confirm: true
+    background: true
+    overwriteOutput: true
+    command: kubectl
+    args:
+      - delete
+      - pod
+      - --context
+      - $CONTEXT
+      - -n
+      - $NAMESPACE
+      - --force
+      - --grace-period=0
+      - --wait=false
+      - $NAME
+
+  cilium-endpoint:
+    shortCut: Shift-M
+    description: Cilium endpoint + policy
+    scopes: [pods]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; pod="$2"; ctx="$3"
+        node="$(kubectl get pod "$pod" --context "$ctx" -n "$ns" -o jsonpath='{.spec.nodeName}')" || exit 1
+        {
+          echo "== ciliumendpoint $ns/$pod =="
+          kubectl get ciliumendpoints.cilium.io "$pod" --context "$ctx" -n "$ns" -o json 2>/dev/null \
+            | jq '{identity: .status.identity, networking: .status.networking, state: .status.state}' \
+            || echo "(no ciliumendpoint - is this pod host-networked?)"
+          echo
+          echo "== cilium agent on node $node =="
+          kubectl cilium exec "$node" --context "$ctx" -- \
+            sh -c 'command -v cilium-dbg >/dev/null && cilium-dbg endpoint list || cilium endpoint list' 2>&1 \
+            | grep -E "IDENTITY|$pod" || true
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT
+
+  image-config:
+    shortCut: Shift-C
+    description: Image config (crane)
+    scopes: [containers]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        img="$1"
+        {
+          echo "== $img =="
+          crane config "$img" 2>&1 | jq . 2>/dev/null || crane config "$img" 2>&1
+          echo; echo "== manifest =="
+          crane manifest "$img" 2>&1 | jq . 2>/dev/null || true
+        } | less -R
+      - --
+      - $COL-IMAGE

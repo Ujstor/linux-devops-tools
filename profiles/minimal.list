@@ -1,0 +1,17 @@
+# profiles/minimal.list — the smallest box that is still pleasant to work on.
+#
+# One module NAME per line (the `# meta: name=` value, i.e. the filename stem
+# without its number). `#` comments and blank lines are ignored. Order here is
+# cosmetic: modules always run in numeric filename order.
+#
+# Shell, git, Go, Python and the WSL adjustments. No containers, no kubernetes,
+# no cloud CLIs, no editors.
+
+preflight                 # 00 — os support, bootstrap packages, XDG dirs
+base-packages             # 05 — the one apt base list
+shell                     # 10 — ~/.bashrc hook, ~/.bashrc.d, prompt, completions
+git                       # 15 — git config (set-if-absent), gh, delta
+lang-go                   # 20 — Go toolchain + the pinned go tools
+lang-python               # 23 — uv and the Python CLIs
+wsl                       # 70 — no-op unless this really is WSL
+summary                   # 99 — what changed and what to do next

@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+#
+# bin/devenv-completions — (re)generate the lazy bash-completion cache.
+#
+# D9. Nine `source <(x completion bash)` lines in the pre-repo ~/.bashrc measured
+# 0.23 s of EVERY interactive shell. bash-completion's own __load_completion()
+# searches
+#     ${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-~/.local/share}/bash-completion}/completions
+# FIRST, and sources the file named after the command on the first TAB for that
+# command. Generating those files once, here, takes the startup cost to zero
+# rather than merely reducing it.
+#
+# MUST-FIX C3: a completion is generated ONLY for a tool that genuinely has a
+# generator. `bao` and `kubeconform` have no completion sub-command at all; their
+# error text must never be cached, because a cached error file breaks TAB for
+# that command entirely. lib/shell.sh's comp_cache discards empty or failing
+# output, and the two are additionally left out of the list below.
+#
+# MUST-FIX S13: --refresh does NOT `rm -rf` the completions directory. It is a
+# SHARED XDG location — hand-written completions and other installers' files live
+# there — so only files carrying this repo's own first-line marker are removed.
+#
+# Usage:
+#     devenv completions              regenerate what is stale
+#     devenv completions --refresh    drop our own cached files first
+#     devenv completions --list       print what would be generated, generate nothing
+set -euo pipefail
+source "${DEVENV_HOME:?}/lib/common.sh"
+
+DEVENV_MODULE=completions
+export DEVENV_MODULE
+
+# Tools whose generator is the conventional `<cmd> completion bash`.
+STD_COMPLETIONS=(
+  kubectl helm k9s k3d kind kustomize argocd velero
+  cilium hubble trivy crictl hcloud kubectl-pgo
+  go-blueprint crane golangci-lint
+)
+
+usage() {
+  cat <<'USAGE'
+usage: devenv completions [--refresh] [--list]
+
+  --refresh   remove the files this repo generated, then regenerate them
+  --list      print the commands that would be handled, and exit
+USAGE
+}
+
+list_targets() {
+  local c
+  for c in "${STD_COMPLETIONS[@]}"; do printf '%s\n' "$c"; done
+  printf '%s\n' gh uv glab kubectl-stern yq terraform tf t k kubecolor
+  local extra
+  for extra in ${DEVENV_EXTRA_COMPLETIONS:-}; do printf '%s\n' "$extra"; done
+}
+
+generate() {
+  local c
+
+  for c in "${STD_COMPLETIONS[@]}"; do
+    comp_cache "$c" "$c" completion bash
+  done
+
+  # Tools whose generator is spelled differently. Each verified against the
+  # installed binary; a wrong spelling would cache an error page.
+  comp_cache gh gh completion -s bash
+  comp_cache glab glab completion -s bash
+  comp_cache uv uv generate-shell-completion bash
+  comp_cache yq yq shell-completion bash
+  comp_cache kubectl-stern kubectl-stern --completion=bash
+
+  # K8: standalone shim FILES for the two kubectl aliases, not an append to the
+  # generated kubectl completion — an append is lost the next time that file is
+  # regenerated, and its ordering is implicit. `-o default` inside the shim is
+  # required or filename completion breaks for the alias.
+  comp_shim k kubectl
+  comp_shim kubecolor kubectl
+
+  # terraform's completion is a `complete -C` BINDING, not generated output, so
+  # it cannot go through comp_cache. The path is resolved, never hardcoded to
+  # /usr/bin/terraform — which is only right while terraform comes from apt.
+  if have terraform; then
+    comp_complete_c terraform tf t "$(command -v terraform)"
+  fi
+
+  # Private or site-local tools, named by the operator rather than by this public
+  # repository. Space-separated command names:
+  #     DEVENV_EXTRA_COMPLETIONS="mytool othertool" devenv completions
+  # Put it in ~/.config/devops-env/shell.env to make it stick.
+  local extra
+  for extra in ${DEVENV_EXTRA_COMPLETIONS:-}; do
+    comp_cache "$extra" "$extra" completion bash
+  done
+
+  # Deliberately absent, and this list is the documentation:
+  #   bao, kubeconform   no completion sub-command exists (C3)
+  #   krew               same; `kubectl krew` has no generator
+  #   nvm                a shell function, not a binary. ~/.bashrc.d/20-lang.sh
+  #                      sources $NVM_DIR/bash_completion inside the lazy shim
+  #   fzf, starship,     they install their own completion through the
+  #   zoxide, direnv     `eval` in ~/.bashrc.d/40-shellui.sh / 70-tools.sh
+  return 0
+}
+
+main() {
+  local refresh=0 only_list=0
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --refresh) refresh=1 ;;
+      --list) only_list=1 ;;
+      -h | --help)
+        usage
+        return 0
+        ;;
+      *)
+        log_error "unknown option: $1"
+        usage >&2
+        return 64
+        ;;
+    esac
+    shift
+  done
+
+  if [ "$only_list" = 1 ]; then
+    list_targets
+    return 0
+  fi
+
+  log_step "shell completions"
+  log_info "cache directory: $(comp_dir)"
+  [ "$refresh" = 1 ] && comp_prune
+  generate
+  log_info "completions load on the first TAB for each command; no shell startup cost"
+  log_step_end
+  return 0
+}
+
+main "$@"

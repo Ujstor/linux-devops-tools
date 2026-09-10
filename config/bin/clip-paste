@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# clip-paste — print the clipboard.  devops-env-config
+# ~/.local/bin/pbpaste is a symlink to this file.
+# `set -e` is deliberately OFF here: these shims probe several backends and a
+# failing probe must degrade to the next one, never abort the user's login flow.
+set -uo pipefail
+# shellcheck source=/dev/null
+. "${DEVENV_LIB_DIR:-$HOME/.local/lib/devops-env}/detect.sh" 2>/dev/null || exit 1
+
+case "$(dv_clip_backend)" in
+  wslclip)
+    ps=$(dv_win_powershell) || {
+      printf 'clip-paste: powershell.exe is not reachable under this WSL mount.\n' >&2
+      exit 1
+    }
+    "$ps" -NoProfile -NonInteractive -Command Get-Clipboard | tr -d '\r'
+    ;;
+  wayland) wl-paste --no-newline ;;
+  x11) xclip -selection clipboard -o ;;
+  *)
+    printf 'clip-paste: no readable clipboard on a headless box.\n' >&2
+    printf 'OSC 52 is write-only in Windows Terminal (deliberately, for security):\n' >&2
+    printf 'paste with your terminal emulator instead.\n' >&2
+    exit 1
+    ;;
+esac

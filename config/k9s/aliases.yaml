@@ -1,0 +1,91 @@
+# devops-env-config :: k9s aliases
+# Typed at the ':' prompt. k9s already auto-registers every resource's plural,
+# singular and CRD shortNames from API discovery - these are the extra
+# hand-rolled ones. Value = GVR: "group/version/resource", "version/resource"
+# or a bare "resource".
+aliases:
+  # ---- k9s stock (kept verbatim so the file stays a superset of the default) ----
+  dp: deployments
+  sec: v1/secrets
+  jo: jobs
+  cr: clusterroles
+  crb: clusterrolebindings
+  ro: roles
+  rb: rolebindings
+  np: networkpolicies
+
+  # ---- core workloads / config ----
+  sts: apps/v1/statefulsets
+  ds: apps/v1/daemonsets
+  rs: apps/v1/replicasets
+  cj: batch/v1/cronjobs
+  po: v1/pods
+  no: v1/nodes
+  ns: v1/namespaces
+  cm: v1/configmaps
+  svc: v1/services
+  ep: v1/endpoints
+  sa: v1/serviceaccounts
+  pvc: v1/persistentvolumeclaims
+  pv: v1/persistentvolumes
+  ev: v1/events
+  ing: networking.k8s.io/v1/ingresses
+  ingc: networking.k8s.io/v1/ingressclasses
+  sc: storage.k8s.io/v1/storageclasses
+  vsnap: snapshot.storage.k8s.io/v1/volumesnapshots
+  hpa: autoscaling/v2/horizontalpodautoscalers
+  pdb: policy/v1/poddisruptionbudgets
+  crd: apiextensions.k8s.io/v1/customresourcedefinitions
+
+  # ---- Cilium ----
+  cnp: cilium.io/v2/ciliumnetworkpolicies
+  ccnp: cilium.io/v2/ciliumclusterwidenetworkpolicies
+  cep: cilium.io/v2/ciliumendpoints
+  cid: cilium.io/v2/ciliumidentities
+  cnode: cilium.io/v2/ciliumnodes
+  clrp: cilium.io/v2/ciliumlocalredirectpolicies
+
+  # ---- Kyverno ----
+  cpol: kyverno.io/v1/clusterpolicies
+  pol: kyverno.io/v1/policies
+  polr: wgpolicyk8s.io/v1alpha2/policyreports
+  cpolr: wgpolicyk8s.io/v1alpha2/clusterpolicyreports
+
+  # ---- cert-manager (NB: 'cr' is taken by clusterroles above, hence 'creq') ----
+  cert: cert-manager.io/v1/certificates
+  creq: cert-manager.io/v1/certificaterequests
+  iss: cert-manager.io/v1/issuers
+  ciss: cert-manager.io/v1/clusterissuers
+  chal: acme.cert-manager.io/v1/challenges
+  ord: acme.cert-manager.io/v1/orders
+
+  # ---- External Secrets ----
+  es: external-secrets.io/v1/externalsecrets
+  ces: external-secrets.io/v1/clusterexternalsecrets
+  ss: external-secrets.io/v1/secretstores
+  css: external-secrets.io/v1/clustersecretstores
+  psec: external-secrets.io/v1alpha1/pushsecrets
+
+  # ---- Argo CD (NB: the CRD's own shortName 'app'/'apps' shadows the apps API group) ----
+  app: argoproj.io/v1alpha1/applications
+  appset: argoproj.io/v1alpha1/applicationsets
+  proj: argoproj.io/v1alpha1/appprojects
+
+  # ---- Rook-Ceph ----
+  ceph: ceph.rook.io/v1/cephclusters
+  cbp: ceph.rook.io/v1/cephblockpools
+  cfs: ceph.rook.io/v1/cephfilesystems
+  cos: ceph.rook.io/v1/cephobjectstores
+
+  # ---- KubeVirt / CDI ----
+  vm: kubevirt.io/v1/virtualmachines
+  vmi: kubevirt.io/v1/virtualmachineinstances
+  vmim: kubevirt.io/v1/virtualmachineinstancemigrations
+  dv: cdi.kubevirt.io/v1beta1/datavolumes
+
+  # ---- Crunchy Postgres ----
+  pgc: postgres-operator.crunchydata.com/v1beta1/postgresclusters
+
+  # ---- Gateway API / Traefik-style ingress CRDs seen on the fleet ----
+  gw: gateway.networking.k8s.io/v1/gateways
+  htr: gateway.networking.k8s.io/v1/httproutes

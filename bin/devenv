@@ -1,0 +1,996 @@
+#!/usr/bin/env bash
+#
+# bin/devenv — the module runner and the permanent post-install CLI.
+#
+# =============================================================================
+# MODULE-AUTHOR CONTRACT
+# =============================================================================
+#
+# A module is an executable file `modules/NN-name.sh`, mode 0755, run as a CHILD
+# PROCESS of this script with the whole DEVENV_* environment exported into it.
+# `NN` is the run order and nothing else — there is no dependency graph, and a
+# module may never assume another module ran. Every module must be individually
+# runnable:
+#
+#     DEVENV_HOME=$PWD ./modules/36-k8s-plugins.sh
+#
+# Shape, exactly:
+#
+#     #!/usr/bin/env bash
+#     # meta: name=k8s-plugins
+#     # meta: desc=krew, kubectl plugins and helm plugins
+#     # meta: profiles=devops,full
+#     # meta: os=any
+#     # meta: arch=amd64,arm64
+#     # meta: needs=kubectl
+#     # meta: root=no
+#     set -euo pipefail
+#     source "${DEVENV_HOME:?}/lib/common.sh"
+#
+#     module_main() { … }
+#     module_main "$@"
+#
+# THE META HEADER. Parsed by `lib/registry.sh` with one `sed` over the first 40
+# lines; the file is never sourced or executed to read it. A trailing `# comment`
+# on a meta line is stripped. Keys:
+#
+#   name=      REQUIRED. The short name used by --only/--skip and profiles/*.list.
+#              Conventionally the filename stem without its number, so that
+#              renumbering a module never invalidates a profile.
+#   desc=      REQUIRED. One line, lower case, no trailing period. Shown by
+#              `devenv list` and as the section header while the module runs.
+#   profiles=  Advisory documentation of which profiles ship it. The AUTHORITY is
+#              profiles/*.list — this key is what `devenv list` displays and what
+#              tools/gen-module-docs.sh reads. Empty means "never in a profile;
+#              run it explicitly with --only".
+#   os=        any | debian | ubuntu | wsl | !wsl | !container      (default any)
+#   arch=      comma-separated dpkg architectures, e.g. amd64,arm64 (default any)
+#   needs=     comma-separated commands that must be on PATH.       (default none)
+#   root=      yes | no. `yes` means the module calls run_sudo.     (default no)
+#
+# GATES. `module_gate` applies os → arch → needs → root before the module starts.
+# A gate that does not hold is a SKIP, never a failure: nothing is executed and the
+# summary says why. `root=yes` on a box with no usable sudo is likewise a SKIP
+# (MUST-FIX S14/P1) — this tool never demands a password up front.
+#
+# EXIT STATUS, the whole protocol:
+#     0    did its work (or found nothing to do)
+#     78   precondition missing — call `skip "reason"`, which exits 78 for you.
+#          Recorded as SKIP, the run continues. This is the ONLY way to bail out
+#          of a module that is simply not applicable here.
+#     any  failure. Recorded as FAIL. The run continues unless --fail-fast.
+#
+# THE LIBRARY. One line pulls in everything; never source an individual lib file:
+#
+#     source "${DEVENV_HOME:?}/lib/common.sh"
+#
+# The full API and every function's contract live in lib/README.md. The parts a
+# module actually uses, by concern:
+#
+#   output      log_info log_warn log_error log_success log_debug log_skip
+#               log_step/log_step_end · die [CODE] MSG · skip REASON (exit 78)
+#               Everything logs to STDERR. stdout is machine-readable output only.
+#   the gate    run CMD… · run_quiet CMD… · run_sudo CMD… · as_root CMD… (READS
+#               only) · is_dry_run · have_root · confirm Q
+#               confirm_dangerous Q OPTIN_VAR · changed WHAT…
+#               `run` takes argv, never a pipeline or a redirection: build the
+#               payload in "$(devenv_tmpdir)" and install it with an argv-only
+#               command.
+#   detection   os_is_debian os_is_ubuntu os_is_wsl os_is_wsl2 os_is_container
+#               os_has_systemd os_is_headless · have CMD · version_ge A B
+#               require_arch ARCH… · the OS_* / IS_* / HAS_* contract variables
+#   files       ensure_dir · write_if_changed (the default writer) · write_once
+#               write_managed · ensure_block_in_file · ensure_line_in_file
+#               symlink_file · yaml_map_merge · backup_file · manifest_record
+#               devenv_sync_repo
+#   packages    pkg_install · pkg_install_optional · pkg_install_first
+#               pkg_available · apt_or_release · pkg_conflicts_report
+#               pkg_remove/pkg_purge are REPORT-ONLY (MUST-FIX S9)
+#   apt repos   repo_key · repo_add · repo_ensure_docker · repo_ensure_hashicorp
+#               repo_ensure_kubernetes · repo_ensure_github_cli
+#               repo_ensure_azure_cli · repo_ensure_trivy
+#   releases    gh_release_install · deb_release_install · gh_latest_tag
+#               download · verify_sha256 · sh_installer_run
+#   shell       bashrc_dropin NAME (stdin) · bashrc_ensure_hook · comp_cache
+#               comp_shim · comp_complete_c
+#   languages   go_install · cargo_install · uv_tool_install · npm_global_install
+#               helm_plugin_ensure · krew_bootstrap · krew_install_plugins
+#   wsl         wslconf_get · wslconf_set · wsl_win_root · wsl_restart_hint
+#
+# THE FIVE RULES a module must not break:
+#
+#   1. EVERY mutation goes through run/run_sudo or an lib/fs.sh writer. No bare
+#      `sudo`, no bare `apt-get`, no bare `curl`, no `sed -i` under $HOME, no `>>`
+#      into a dotfile. `--dry-run` is a true no-op and tests/policy/rules.sh greps
+#      for every one of those.
+#   2. IDEMPOTENT BY CONSTRUCTION. A second run must write nothing, back up
+#      nothing and print nothing. Compare before you write; version-gate before you
+#      download.
+#   3. NEVER DESTROY THE USER'S WORK. Packages the user installed are reported, not
+#      removed. Files without this repo's marker are never pruned. A symlinked
+#      dotfile is written through, never replaced.
+#   4. NO PIN OUTSIDE versions.env. Every version comes from a key there, and every
+#      key carries an `# owner: <module name>` comment.
+#   5. NOTHING PRIVATE. This repository is public: no real hostname, cluster,
+#      context, realm, client id, IP or kubeconfig content in code, comments,
+#      examples, docs or tests. Placeholders only.
+#
+# PRIVILEGED / IRREVERSIBLE STEPS (MUST-FIX S5). `--yes` answers ordinary questions
+# only. Anything system-wide and hard to undo must go through
+# `confirm_dangerous QUESTION OPTIN_VAR`, which refuses under --yes unless its own
+# opt-in variable is set. The canonical opt-ins, each with a CLI flag here:
+#
+#     DEVENV_ALLOW_DOCKER_GROUP   --allow-docker-group   docker group membership
+#     DEVENV_ALLOW_WSL_CONF       --allow-wsl-conf       writing /etc/wsl.conf
+#     DEVENV_ALLOW_PKG_REMOVE     --allow-pkg-remove     removing an apt package
+#
+# FEATURE GATES a module may read (all defined in versions.env, all off by default;
+# see `PROFILE GATES` below for the ones a profile turns on):
+#
+#     KREW_EXTRAS INSTALL_PACKER INSTALL_EXTRAS INSTALL_K8S_OPT INSTALL_HOMEBREW
+#     INSTALL_AI_AGENTS TMUX_FROM_SOURCE ENABLE_NALA_ALIAS DEVENV_UPGRADE
+#     DEVENV_PRUNE DEVENV_ADOPT_BASHRC DEVENV_STARSHIP DEVENV_DOCTOR_FIX
+#
+# =============================================================================
+
+set -euo pipefail
+
+# The environment as the user gave it, captured BEFORE versions.env is loaded —
+# `source lib/common.sh` exports every key in that file, after which "the user set
+# this" and "the default said 0" are indistinguishable. Used by apply_profile_gates.
+_env_krew_extras=${KREW_EXTRAS-}
+_env_install_packer=${INSTALL_PACKER-}
+_env_install_extras=${INSTALL_EXTRAS-}
+_env_install_ai=${INSTALL_AI_AGENTS-}
+
+# bin/devenv may be reached through a symlink on PATH, so resolve the real file
+# before deriving the repository root. `${BASH_SOURCE[0]:-}` for the same reason
+# install.sh uses it: never dereference an array element that may not exist.
+if [ -z "${DEVENV_HOME:-}" ]; then
+  _self=${BASH_SOURCE[0]:-$0}
+  if command -v readlink >/dev/null 2>&1; then
+    _self=$(readlink -f -- "$_self" 2>/dev/null || printf '%s' "$_self")
+  fi
+  DEVENV_HOME=$(CDPATH='' cd -- "$(dirname -- "$_self")/.." && pwd -P)
+  unset _self
+fi
+export DEVENV_HOME
+
+# shellcheck source=lib/common.sh
+source "${DEVENV_HOME:?}/lib/common.sh"
+
+DEVENV_VERSION_LABEL='1.0.0-dev'
+
+# ---------------------------------------------------------------------------
+# State collected by the parser
+# ---------------------------------------------------------------------------
+
+_cmd=''
+_cmd_args=()
+_only_parts=()
+_skip_parts=()
+_profile_set=0
+_uninstall_all=0
+
+usage() {
+  cat <<'EOF'
+devenv — install and maintain this machine's developer environment
+
+  devenv [OPTIONS] [COMMAND]
+
+Commands (default: install)
+  install                 run the resolved plan
+  list                    print every module with its profiles and gates (stdout, TSV)
+  doctor [--fix]          audit this machine; --fix repairs what it safely can
+  update                  fast-forward the checkout, then re-run the last plan
+  uninstall [--all]       remove the shell integration and the files this repo owns
+  shell install           add the managed block to ~/.bashrc
+  shell uninstall         remove the managed block from ~/.bashrc
+  shell status            report what shell integration is in place
+  completions             regenerate the lazy bash-completion cache
+  version                 print the checkout's ref and the versions.env digest
+  help                    this text
+
+Options
+  -p, --profile NAME      which profile to run          (default: devops)
+  -o, --only MODULES      comma-separated; replaces the profile entirely
+  -s, --skip MODULES      comma-separated; subtracted from the plan
+  -n, --dry-run           print every mutating action and change nothing
+  -y, --yes               answer ordinary prompts with yes (never the dangerous ones)
+      --fail-fast         stop at the first failing module
+      --upgrade           allow `apt-get upgrade` (never implicit)
+      --extras            turn on the optional rosters (KREW_EXTRAS, INSTALL_EXTRAS)
+      --prune             remove ~/.bashrc.d fragments this repo no longer ships
+      --no-prune          keep them (the default)
+      --adopt-bashrc      replace a symlinked ~/.bashrc with a real file, after a backup
+      --starship MODE     upstream | overlay | adopt | print   (default: print)
+      --ref REF           git ref used by `update`             (default: main)
+      --force-update      let `update` overwrite local modifications
+      --no-update         let `update` skip the fetch and just re-run the plan
+      --fix               `doctor` only: repair instead of just reporting
+      --all               `uninstall` only: also drop ~/.config, ~/.cache and state
+  -v, --verbose  -q, --quiet  --no-color
+  -h, --help     -V, --version
+
+Explicit opt-ins for privileged, hard-to-undo steps. `--yes` does NOT imply these:
+      --allow-docker-group    add your user to the docker group (root-equivalent)
+      --allow-wsl-conf        let a module write /etc/wsl.conf
+      --allow-pkg-remove      let a module remove an apt package
+
+Examples
+  devenv                              # the default devops profile
+  devenv --dry-run                    # a plan, nothing touched
+  devenv --profile minimal --yes
+  devenv --only k9s-config,k8s-plugins
+  devenv --skip containers
+  devenv list | column -t -s "$(printf '\t')"
+  devenv doctor
+EOF
+}
+
+# bail CODE — a DELIBERATE exit. Clears the ERR trap lib/common.sh installs first,
+# so a usage error does not print the "failed (exit N) / command: exit N" pair that
+# belongs to an unexpected failure. Never returns.
+bail() {
+  trap - ERR
+  exit "${1:-1}"
+}
+
+usage_error() {
+  log_error "$*"
+  log_error "run 'devenv --help' for the full list"
+  bail 64
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+# need_value OPT VALUE_COUNT — dies with a usage error when an option has no value.
+need_value() {
+  [ "$2" -gt 0 ] || usage_error "$1 needs a value"
+}
+
+parse_args() {
+  local a v
+  while [ $# -gt 0 ]; do
+    a=$1
+    case $a in
+      --*=*)
+        v=${a#*=}
+        a=${a%%=*}
+        case $a in
+          --profile)
+            DEVENV_PROFILE=$v
+            _profile_set=1
+            ;;
+          --only) _only_parts+=("$v") ;;
+          --skip) _skip_parts+=("$v") ;;
+          --ref) DEVENV_REF=$v ;;
+          --starship) DEVENV_STARSHIP=$v ;;
+          --home) usage_error "--home belongs to install.sh; run devenv as DEVENV_HOME=<dir> devenv …" ;;
+          --repo) DEVENV_REPO=$v ;;
+          *) usage_error "unknown option: $a=$v" ;;
+        esac
+        ;;
+      -p | --profile)
+        need_value "$a" $(($# - 1))
+        DEVENV_PROFILE=$2
+        _profile_set=1
+        shift
+        ;;
+      -o | --only)
+        need_value "$a" $(($# - 1))
+        _only_parts+=("$2")
+        shift
+        ;;
+      -s | --skip)
+        need_value "$a" $(($# - 1))
+        _skip_parts+=("$2")
+        shift
+        ;;
+      --ref)
+        need_value "$a" $(($# - 1))
+        DEVENV_REF=$2
+        shift
+        ;;
+      --starship)
+        need_value "$a" $(($# - 1))
+        DEVENV_STARSHIP=$2
+        shift
+        ;;
+      --home)
+        # DEVENV_HOME decides where lib/ and modules/ are read from, and both are
+        # already resolved by the time this parser runs. It is install.sh's option;
+        # for a direct call, set the variable in the environment.
+        usage_error "--home belongs to install.sh; run devenv as DEVENV_HOME=<dir> devenv …"
+        ;;
+      --repo)
+        need_value "$a" $(($# - 1))
+        DEVENV_REPO=$2
+        shift
+        ;;
+      -n | --dry-run) DEVENV_DRY_RUN=1 ;;
+      -y | --yes) DEVENV_ASSUME_YES=1 ;;
+      -v | --verbose) DEVENV_VERBOSE=1 ;;
+      -q | --quiet) DEVENV_QUIET=1 ;;
+      --no-color | --no-colour) DEVENV_NO_COLOR=1 ;;
+      --fail-fast) DEVENV_FAIL_FAST=1 ;;
+      --upgrade) DEVENV_UPGRADE=1 ;;
+      --extras)
+        KREW_EXTRAS=1
+        INSTALL_EXTRAS=1
+        _env_krew_extras=1
+        _env_install_extras=1
+        ;;
+      --prune) DEVENV_PRUNE=1 ;;
+      --no-prune) DEVENV_PRUNE=0 ;;
+      --adopt-bashrc) DEVENV_ADOPT_BASHRC=1 ;;
+      --fix) DEVENV_DOCTOR_FIX=1 ;;
+      --all) _uninstall_all=1 ;;
+      --allow-docker-group) DEVENV_ALLOW_DOCKER_GROUP=1 ;;
+      --allow-wsl-conf) DEVENV_ALLOW_WSL_CONF=1 ;;
+      --allow-pkg-remove) DEVENV_ALLOW_PKG_REMOVE=1 ;;
+      --force-update) DEVENV_FORCE_UPDATE=1 ;;
+      --no-update) DEVENV_NO_UPDATE=1 ;;
+      --list) _cmd=list ;;
+      -h | --help)
+        usage
+        bail 0
+        ;;
+      -V | --version) _cmd=version ;;
+      --)
+        shift
+        while [ $# -gt 0 ]; do
+          if [ -z "$_cmd" ]; then _cmd=$1; else _cmd_args+=("$1"); fi
+          shift
+        done
+        break
+        ;;
+      -*) usage_error "unknown option: $a" ;;
+      *)
+        if [ -z "$_cmd" ]; then _cmd=$a; else _cmd_args+=("$a"); fi
+        ;;
+    esac
+    shift
+  done
+  return 0
+}
+
+# join_parts SEP ITEM… — prints ITEMs joined by SEP, dropping empty ones.
+join_parts() {
+  local sep=$1 out='' item
+  shift
+  for item in "$@"; do
+    [ -n "$item" ] || continue
+    if [ -z "$out" ]; then out=$item; else out="$out$sep$item"; fi
+  done
+  printf '%s' "$out"
+}
+
+# apply_settings — turn the parsed flags into the exported DEVENV_* contract.
+apply_settings() {
+  log_init_colour
+
+  DEVENV_ONLY=$(join_parts , ${_only_parts[@]+"${_only_parts[@]}"})
+  DEVENV_SKIP=$(join_parts , ${_skip_parts[@]+"${_skip_parts[@]}"})
+
+  if [ -n "$DEVENV_ONLY" ] && [ "$_profile_set" = 1 ]; then
+    log_warn "--only replaces the profile; --profile $DEVENV_PROFILE is ignored"
+  fi
+
+  # SPEC 5.2: --yes is implied when nobody can answer a question. `confirm` reads
+  # /dev/tty rather than stdin, so the honest test is "is there a terminal at all".
+  # Dangerous steps stay behind confirm_dangerous either way (MUST-FIX S5).
+  if [ "$DEVENV_ASSUME_YES" != 1 ] && [ ! -t 0 ] && ! have_tty; then
+    log_debug "no terminal available — assuming yes for ordinary prompts"
+    DEVENV_ASSUME_YES=1
+  fi
+
+  DEVENV_REF=${DEVENV_REF:-main}
+  DEVENV_REPO=${DEVENV_REPO:-Ujstor/devops-env-config}
+  DEVENV_FAIL_FAST=${DEVENV_FAIL_FAST:-0}
+  DEVENV_PRUNE=${DEVENV_PRUNE:-0}
+  DEVENV_ADOPT_BASHRC=${DEVENV_ADOPT_BASHRC:-0}
+  DEVENV_STARSHIP=${DEVENV_STARSHIP:-print}
+  DEVENV_DOCTOR_FIX=${DEVENV_DOCTOR_FIX:-0}
+  DEVENV_UPGRADE=${DEVENV_UPGRADE:-0}
+  DEVENV_ALLOW_DOCKER_GROUP=${DEVENV_ALLOW_DOCKER_GROUP:-0}
+  DEVENV_ALLOW_WSL_CONF=${DEVENV_ALLOW_WSL_CONF:-0}
+  DEVENV_ALLOW_PKG_REMOVE=${DEVENV_ALLOW_PKG_REMOVE:-0}
+  DEVENV_FORCE_UPDATE=${DEVENV_FORCE_UPDATE:-0}
+  DEVENV_NO_UPDATE=${DEVENV_NO_UPDATE:-0}
+
+  case $DEVENV_STARSHIP in
+    upstream | overlay | adopt | print) ;;
+    *) usage_error "--starship must be upstream, overlay, adopt or print (got '$DEVENV_STARSHIP')" ;;
+  esac
+
+  export DEVENV_PROFILE DEVENV_ONLY DEVENV_SKIP DEVENV_DRY_RUN DEVENV_ASSUME_YES
+  export DEVENV_VERBOSE DEVENV_QUIET DEVENV_NO_COLOR DEVENV_FAIL_FAST DEVENV_PRUNE
+  export DEVENV_ADOPT_BASHRC DEVENV_STARSHIP DEVENV_DOCTOR_FIX DEVENV_UPGRADE
+  export DEVENV_REF DEVENV_REPO DEVENV_FORCE_UPDATE DEVENV_NO_UPDATE
+  export DEVENV_ALLOW_DOCKER_GROUP DEVENV_ALLOW_WSL_CONF DEVENV_ALLOW_PKG_REMOVE
+}
+
+# apply_profile_gates
+#   PROFILE GATES. profiles/*.list is a plain list of module names — it cannot set a
+#   variable — so the two profiles that imply feature gates set them here, and only
+#   when the user has not already decided:
+#       full  ->  KREW_EXTRAS=1  INSTALL_PACKER=1  INSTALL_EXTRAS=1
+#       ai    ->  INSTALL_AI_AGENTS=1
+#   `ai` is the opt-in profile for the extra agent CLIs. Claude Code itself is a BASE
+#   install and ships in the default `devops` profile, so `INSTALL_AI_AGENTS` gates
+#   only the extras (opencode, crush).
+apply_profile_gates() {
+  # --only replaces the profile, so it replaces the profile's gates too: run one
+  # module with the gates off unless the environment says otherwise.
+  if [ -z "$DEVENV_ONLY" ]; then
+    case $DEVENV_PROFILE in
+      full)
+        [ -n "$_env_krew_extras" ] || KREW_EXTRAS=1
+        [ -n "$_env_install_packer" ] || INSTALL_PACKER=1
+        [ -n "$_env_install_extras" ] || INSTALL_EXTRAS=1
+        ;;
+      ai)
+        [ -n "$_env_install_ai" ] || INSTALL_AI_AGENTS=1
+        ;;
+    esac
+  fi
+  # Every gate is DEFINED for a module, always, so no module has to guess.
+  KREW_EXTRAS=${KREW_EXTRAS:-0}
+  INSTALL_PACKER=${INSTALL_PACKER:-0}
+  INSTALL_EXTRAS=${INSTALL_EXTRAS:-0}
+  INSTALL_AI_AGENTS=${INSTALL_AI_AGENTS:-0}
+  export KREW_EXTRAS INSTALL_PACKER INSTALL_EXTRAS INSTALL_AI_AGENTS
+  return 0
+}
+
+# check_profile — a typo in --profile must not look like an empty plan.
+check_profile() {
+  [ -n "$DEVENV_ONLY" ] && return 0
+  [ -f "$DEVENV_PROFILE_DIR/$DEVENV_PROFILE.list" ] && return 0
+  log_error "no such profile: $DEVENV_PROFILE"
+  local f
+  for f in "$DEVENV_PROFILE_DIR"/*.list; do
+    [ -f "$f" ] || continue
+    log_error "  available: $(basename -- "$f" .list)"
+  done
+  bail 64
+}
+
+# ---------------------------------------------------------------------------
+# install
+# ---------------------------------------------------------------------------
+
+# record_plan — remembers what `update` should re-run. Honours --dry-run through
+# write_if_changed, so a dry run leaves no trace here either.
+#
+# ONLY `install` and `update` record anything. `doctor` reaches cmd_install with
+# DEVENV_ONLY=doctor to reuse the module runner, and recording THAT would (a)
+# replace the plan `devenv update` re-runs with "only=doctor", and (b) make a
+# read-only audit write a file and take a backup of the file it replaced — which
+# the container matrix caught as `devenv doctor` failing its own read-only test.
+record_plan() {
+  case ${_cmd:-install} in
+    install | update) ;;
+    *)
+      log_debug "not recording the plan: '$_cmd' is not an install"
+      return 0
+      ;;
+  esac
+  ensure_dir "$DEVENV_STATE" || return 0
+  printf '%s\n' \
+    "# devops-env-config — the plan 'devenv update' re-runs. Generated; edit freely." \
+    "profile=$DEVENV_PROFILE" \
+    "only=$DEVENV_ONLY" \
+    "skip=$DEVENV_SKIP" \
+    | write_if_changed "$DEVENV_STATE/last-plan" 0644
+  return 0
+}
+
+# refresh_completions_late
+#   Regenerates the lazy completion cache AFTER every module has run.
+#
+#   WHY IT CANNOT LIVE IN 10-shell ALONE. `comp_cache` can only generate a
+#   completion for a command that is already on PATH, and 10-shell runs SIXTH —
+#   before 15-git installs `gh`, before 35-kubernetes installs kubectl/helm/k9s,
+#   before 40-iac installs terraform and 45-cloud installs az/glab/hcloud. On a
+#   fresh box the first run therefore cached nothing for any of them and the
+#   SECOND run cached them all, which is an idempotency failure: the container
+#   matrix caught exactly that (`completions/gh` appearing only on run 2).
+#
+#   10-shell still calls it, so `devenv --only shell` works on its own; this pass
+#   is what makes ONE full run converge. Running it twice costs nothing:
+#   comp_cache skips a cache file that is newer than its binary and otherwise
+#   writes through write_if_changed, so nothing is rewritten with identical bytes.
+refresh_completions_late() {
+  local -a plan=("$@")
+  local gen="$DEVENV_HOME/bin/devenv-completions" f
+  is_dry_run && return 0
+  [ -f "$gen" ] || return 0
+  for f in ${plan[0]+"${plan[@]}"}; do
+    [ "$(module_name "$f")" = shell ] || continue
+    log_debug 'refreshing the completion cache for tools installed later in this run'
+    bash "$gen" >/dev/null 2>&1 || log_debug 'the late completion refresh reported a problem'
+    return 0
+  done
+  return 0
+}
+
+cmd_install() {
+  local -a plan=()
+  local f name pf rc=0 mrc has_summary=0
+
+  check_profile
+  apply_profile_gates
+
+  # resolve_plan runs in THIS shell, not in a `<(…)` subshell: a bad module name
+  # must be able to stop the run, and an exit inside a process substitution cannot.
+  pf=$(devenv_tmpfile) || die "cannot create a temporary file"
+  if ! resolve_plan >"$pf"; then
+    log_error "could not resolve the plan for profile='$DEVENV_PROFILE' only='$DEVENV_ONLY'"
+    return 64
+  fi
+  mapfile -t plan <"$pf"
+  if [ ${#plan[@]} -eq 0 ]; then
+    log_error "the plan is empty — nothing to do"
+    log_error "profile='$DEVENV_PROFILE' only='$DEVENV_ONLY' skip='$DEVENV_SKIP'"
+    return 64
+  fi
+
+  log_step "plan — ${#plan[@]} modules from ${DEVENV_ONLY:+--only }${DEVENV_ONLY:-profile $DEVENV_PROFILE}"
+  os_summary
+  is_dry_run && log_plan "dry run: nothing on this machine will be changed"
+  for f in "${plan[@]}"; do
+    name=$(module_name "$f")
+    [ "$name" = summary ] && has_summary=1
+    log_plan "$name"
+  done
+  log_step_end
+
+  for f in "${plan[@]}"; do
+    mrc=0
+    run_module "$f" || mrc=$?
+    if [ "$mrc" -ne 0 ]; then
+      rc=$mrc
+      if [ "${DEVENV_FAIL_FAST:-0}" = 1 ]; then
+        log_error "--fail-fast: stopping after $(module_name "$f")"
+        break
+      fi
+    fi
+  done
+
+  # Tools installed by modules that run after 10-shell get their completions here,
+  # so ONE run converges instead of two. See refresh_completions_late.
+  refresh_completions_late "${plan[@]}"
+
+  # Recorded before the summary so the summary is the last thing on the screen.
+  # A dry run records nothing at all: it must leave no trace, not even a quiet one.
+  is_dry_run || record_plan
+
+  # 99-summary prints the summary itself when it is in the plan; printing it twice
+  # would be worse than not printing it at all.
+  if [ "$has_summary" = 0 ]; then
+    summary_print || true
+  fi
+  return "$rc"
+}
+
+# ---------------------------------------------------------------------------
+# list
+# ---------------------------------------------------------------------------
+
+cmd_list() {
+  # TSV on stdout, one row per module: name file profiles os arch needs root desc.
+  # The header is printed only to a terminal, so a pipe still gets clean data.
+  if [ -t 1 ]; then
+    printf 'NAME\tFILE\tPROFILES\tOS\tARCH\tNEEDS\tROOT\tDESCRIPTION\n'
+  fi
+  print_plan
+}
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+cmd_doctor() {
+  local a
+  for a in ${_cmd_args[@]+"${_cmd_args[@]}"}; do
+    case $a in
+      --fix) DEVENV_DOCTOR_FIX=1 ;;
+      *) usage_error "doctor: unknown argument '$a'" ;;
+    esac
+  done
+  export DEVENV_DOCTOR_FIX
+  DEVENV_ONLY=doctor
+  export DEVENV_ONLY
+  cmd_install
+}
+
+# ---------------------------------------------------------------------------
+# update
+# ---------------------------------------------------------------------------
+
+# checkout_kind — prints git | tarball | plain for $DEVENV_HOME.
+checkout_kind() {
+  if [ -d "$DEVENV_HOME/.git" ] && have git; then
+    printf 'git\n'
+  elif [ -f "$DEVENV_HOME/.tarball-install" ]; then
+    printf 'tarball\n'
+  else
+    printf 'plain\n'
+  fi
+}
+
+update_git_checkout() {
+  local before after
+  if [ -n "$(git -C "$DEVENV_HOME" status --porcelain 2>/dev/null)" ]; then
+    if [ "${DEVENV_FORCE_UPDATE:-0}" != 1 ]; then
+      log_warn "$DEVENV_HOME has local modifications — not touching them."
+      log_warn "Re-run with --force-update to overwrite tracked files with $DEVENV_REF."
+      return 0
+    fi
+    log_warn "--force-update: overwriting local modifications to tracked files"
+  fi
+  before=$(git -C "$DEVENV_HOME" rev-parse HEAD 2>/dev/null || printf 'unknown')
+  run git -C "$DEVENV_HOME" fetch --depth=1 --quiet origin "$DEVENV_REF" || {
+    log_warn "could not reach the remote — keeping the checkout you have"
+    return 0
+  }
+  if [ "${DEVENV_FORCE_UPDATE:-0}" = 1 ]; then
+    run git -C "$DEVENV_HOME" checkout --quiet --force --detach FETCH_HEAD || return 0
+  else
+    run git -C "$DEVENV_HOME" checkout --quiet --detach FETCH_HEAD || return 0
+  fi
+  after=$(git -C "$DEVENV_HOME" rev-parse HEAD 2>/dev/null || printf 'unknown')
+  [ "$before" = "$after" ] || changed "updated the checkout: ${before:0:12} -> ${after:0:12}"
+  return 0
+}
+
+# update_tarball_checkout
+#   The no-git path: download the ref again, verify it looks like this repository,
+#   then swap it in. MUST-FIX S7 — the swap only ever touches a directory that is
+#   ours (marker files, owned by us, not a symlink) and a scratch directory we made
+#   ourselves with mktemp.
+update_tarball_checkout() {
+  local parent tmp tarball
+  parent=$(dirname -- "$DEVENV_HOME")
+  if is_dry_run; then
+    log_dryrun "re-download https://codeload.github.com/$DEVENV_REPO/tar.gz/$DEVENV_REF into $DEVENV_HOME"
+    return 0
+  fi
+  tmp=$(mktemp -d "$parent/.devenv-update.XXXXXXXX") || {
+    log_error "cannot create a scratch directory in $parent"
+    return 1
+  }
+  tarball="$tmp/src.tar.gz"
+  if ! download "https://codeload.github.com/$DEVENV_REPO/tar.gz/$DEVENV_REF" "$tarball"; then
+    rm -rf -- "$tmp"
+    log_error "could not download $DEVENV_REPO ($DEVENV_REF)"
+    return 1
+  fi
+  mkdir -p -- "$tmp/repo"
+  if ! tar -xzf "$tarball" --strip-components=1 -C "$tmp/repo"; then
+    rm -rf -- "$tmp"
+    log_error "could not unpack the download"
+    return 1
+  fi
+  if [ ! -f "$tmp/repo/lib/common.sh" ] || [ ! -f "$tmp/repo/bin/devenv" ] \
+    || [ ! -f "$tmp/repo/versions.env" ]; then
+    rm -rf -- "$tmp"
+    log_error "the download does not look like devops-env-config — refusing to install it"
+    return 1
+  fi
+  : >"$tmp/repo/.tarball-install"
+  if ! assert_home_replaceable; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if ! mv -- "$DEVENV_HOME" "$tmp/old"; then
+    log_error "could not move $DEVENV_HOME aside; nothing was changed"
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if ! mv -- "$tmp/repo" "$DEVENV_HOME"; then
+    log_error "could not swap the new checkout into $DEVENV_HOME"
+    if mv -- "$tmp/old" "$DEVENV_HOME"; then
+      log_warn "the checkout you had is back in place"
+      rm -rf -- "$tmp"
+    else
+      log_error "your old checkout is still at $tmp/old — move it back by hand"
+    fi
+    return 1
+  fi
+  rm -rf -- "$tmp"
+  changed "re-downloaded the checkout in $DEVENV_HOME"
+  return 0
+}
+
+# assert_home_replaceable — MUST-FIX S7, the same test install.sh applies.
+assert_home_replaceable() {
+  local d=${DEVENV_HOME%/}
+  case $d in
+    '' | / | "${HOME%/}") ;&
+    /bin | /boot | /dev | /etc | /home | /lib | /lib64 | /opt | /proc | /root | /run | /sbin | /srv | /sys | /tmp | /usr | /var)
+      log_error "refusing to replace '$DEVENV_HOME' — it is / , your home directory or a system directory"
+      return 1
+      ;;
+  esac
+  case ${d#/} in
+    */*) ;;
+    *)
+      log_error "refusing to replace the top-level directory '$DEVENV_HOME'"
+      return 1
+      ;;
+  esac
+  if [ -L "$DEVENV_HOME" ]; then
+    log_error "$DEVENV_HOME is a symlink — refusing to replace it"
+    return 1
+  fi
+  if [ ! -O "$DEVENV_HOME" ]; then
+    log_error "$DEVENV_HOME is not owned by $(id -un) — refusing to replace it"
+    return 1
+  fi
+  if [ ! -f "$DEVENV_HOME/lib/common.sh" ] || [ ! -f "$DEVENV_HOME/bin/devenv" ]; then
+    log_error "$DEVENV_HOME does not carry this repository's marker files — refusing to replace it"
+    return 1
+  fi
+  return 0
+}
+
+cmd_update() {
+  local kind profile only skip line
+  log_step "update"
+  kind=$(checkout_kind)
+  if [ "${DEVENV_NO_UPDATE:-0}" = 1 ]; then
+    log_info "--no-update: keeping $DEVENV_HOME as it is"
+  else
+    case $kind in
+      git) update_git_checkout ;;
+      tarball) update_tarball_checkout || return 1 ;;
+      plain)
+        log_warn "$DEVENV_HOME is neither a git checkout nor a tarball install."
+        log_warn "Update it however you put it there; re-running the plan anyway."
+        ;;
+    esac
+  fi
+  log_step_end
+
+  # Replay the last plan, unless this invocation already carries one.
+  if [ -z "$DEVENV_ONLY" ] && [ "$_profile_set" = 0 ] && [ -f "$DEVENV_STATE/last-plan" ]; then
+    while IFS= read -r line; do
+      case $line in
+        profile=*) profile=${line#profile=} ;;
+        only=*) only=${line#only=} ;;
+        skip=*) skip=${line#skip=} ;;
+      esac
+    done <"$DEVENV_STATE/last-plan"
+    [ -n "${profile:-}" ] && DEVENV_PROFILE=$profile
+    [ -n "${only:-}" ] && DEVENV_ONLY=$only
+    [ -n "${skip:-}" ] && DEVENV_SKIP=$skip
+    export DEVENV_PROFILE DEVENV_ONLY DEVENV_SKIP
+    if [ -n "$DEVENV_ONLY" ]; then
+      log_info "replaying the last plan: --only $DEVENV_ONLY${DEVENV_SKIP:+ --skip $DEVENV_SKIP}"
+    else
+      log_info "replaying the last plan: --profile $DEVENV_PROFILE${DEVENV_SKIP:+ --skip $DEVENV_SKIP}"
+    fi
+  fi
+
+  # The checkout on disk may have just been replaced under us, including this very
+  # file. Hand over to the NEW bin/devenv with `exec`, from inside a function whose
+  # body bash has already parsed — nothing more is read from the old file.
+  if [ "${DEVENV_UPDATED:-0}" != 1 ] && [ "$kind" != plain ] && ! is_dry_run; then
+    export DEVENV_UPDATED=1
+    local -a argv=(install --profile "$DEVENV_PROFILE")
+    [ -n "$DEVENV_ONLY" ] && argv+=(--only "$DEVENV_ONLY")
+    [ -n "$DEVENV_SKIP" ] && argv+=(--skip "$DEVENV_SKIP")
+    [ "$DEVENV_ASSUME_YES" = 1 ] && argv+=(--yes)
+    [ "$DEVENV_VERBOSE" = 1 ] && argv+=(--verbose)
+    exec "$DEVENV_HOME/bin/devenv" "${argv[@]}"
+  fi
+  cmd_install
+}
+
+# ---------------------------------------------------------------------------
+# uninstall  (MUST-FIX P2 — this has to genuinely work)
+# ---------------------------------------------------------------------------
+
+cmd_uninstall() {
+  local mf path removed=0 kept=() elsewhere=()
+
+  log_step "uninstall"
+  log_info "This removes the ~/.bashrc managed block and every file this repository"
+  log_info "wrote and still owns byte-for-byte. It does NOT remove packages, binaries"
+  log_info "in /usr/local/bin, krew plugins, Go tools or anything you edited yourself."
+  if ! confirm "remove devops-env-config's shell integration and owned files?"; then
+    log_info "nothing was changed"
+    log_step_end
+    return 0
+  fi
+
+  bashrc_remove_hook
+
+  mf=$(manifest_path)
+  if [ -f "$mf" ]; then
+    while IFS=$'\t' read -r _ path; do
+      [ -n "${path:-}" ] || continue
+      case $path in
+        "$HOME"/*) ;;
+        *)
+          elsewhere+=("$path")
+          continue
+          ;;
+      esac
+      [ -e "$path" ] || continue
+      if ! manifest_owns "$path"; then
+        kept+=("$path")
+        continue
+      fi
+      run rm -f -- "$path" || continue
+      manifest_forget "$path"
+      changed "removed $path"
+      removed=$((removed + 1))
+    done <"$mf"
+  fi
+
+  # Completion files this repo generated but never recorded (older versions).
+  comp_prune
+
+  log_info "removed $removed file(s) this repository owned"
+  if [ ${#kept[@]} -gt 0 ]; then
+    log_warn "kept ${#kept[@]} file(s) you edited after they were installed:"
+    for path in "${kept[@]}"; do log_warn "    $path"; done
+  fi
+  if [ ${#elsewhere[@]} -gt 0 ]; then
+    log_info "left ${#elsewhere[@]} file(s) outside your home directory alone:"
+    for path in "${elsewhere[@]}"; do log_info "    $path"; done
+  fi
+
+  if [ "$_uninstall_all" = 1 ]; then
+    if confirm_dangerous "also delete $DEVENV_CONFIG, $DEVENV_CACHE and $DEVENV_STATE?" \
+      DEVENV_ALLOW_UNINSTALL_ALL; then
+      local d
+      for d in "$DEVENV_CONFIG" "$DEVENV_CACHE" "$DEVENV_STATE"; do
+        case $d in
+          "$HOME"/*/*)
+            [ -d "$d" ] || continue
+            run rm -rf -- "$d" && changed "removed $d"
+            ;;
+          *) log_warn "refusing to remove '$d' — it is not safely under your home directory" ;;
+        esac
+      done
+      log_warn "$DEVENV_CONFIG held your per-host settings (sso.env and friends); they are gone."
+    fi
+  fi
+
+  log_step_end
+  log_step "what is left, and how to remove it"
+  log_info "the checkout itself:      rm -rf $DEVENV_HOME"
+  log_info "apt packages:             none are removed by this tool; use apt yourself"
+  log_info "release binaries:         /usr/local/bin (go, helm, k9s, neovim, starship, …)"
+  log_info "krew plugins:             kubectl krew uninstall <name>   (~/.krew)"
+  log_info "helm plugins:             helm plugin uninstall <name>"
+  log_info "go tools:                 rm ~/go/bin/<tool>"
+  log_info "python CLIs:              uv tool uninstall <name>"
+  log_info "your own ~/.bashrc.d/90-local.sh is untouched, as always"
+  log_step_end
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# shell
+# ---------------------------------------------------------------------------
+
+cmd_shell() {
+  local sub=${1:-status}
+  case $sub in
+    install)
+      [ "${DEVENV_ADOPT_BASHRC:-0}" = 1 ] && bashrc_adopt
+      bashrc_ensure_hook || die "could not write the managed block to $DEVENV_BASHRC"
+      bashrc_ensure_local
+      log_success "shell integration is in place; start a new login shell:  exec bash -l"
+      ;;
+    uninstall)
+      bashrc_remove_hook
+      log_success "the managed block is gone from $DEVENV_BASHRC"
+      log_info "the ~/.bashrc.d fragments are still there; 'devenv uninstall' removes those too"
+      ;;
+    status)
+      log_step "shell integration"
+      if [ -L "$DEVENV_BASHRC" ]; then
+        log_info "$DEVENV_BASHRC is a symlink -> $(readlink -f -- "$DEVENV_BASHRC" 2>/dev/null || printf '?')"
+      fi
+      if has_block_in_file "$DEVENV_BASHRC" "$DEVENV_BASHRC_MARKER"; then
+        log_success "managed block present in $DEVENV_BASHRC"
+      else
+        log_warn "no managed block in $DEVENV_BASHRC — run: devenv shell install"
+      fi
+      if [ -d "$DEVENV_DROPIN_DIR" ]; then
+        local f n=0
+        for f in "$DEVENV_DROPIN_DIR"/*; do
+          [ -f "$f" ] || continue
+          n=$((n + 1))
+        done
+        log_info "$DEVENV_DROPIN_DIR holds $n fragment(s)"
+      else
+        log_warn "$DEVENV_DROPIN_DIR does not exist — run: devenv --only shell"
+      fi
+      log_info "completion cache: $(comp_dir)"
+      log_step_end
+      ;;
+    *) usage_error "shell: expected install, uninstall or status (got '$sub')" ;;
+  esac
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# completions / version
+# ---------------------------------------------------------------------------
+
+cmd_completions() {
+  local gen="$DEVENV_HOME/bin/devenv-completions"
+  if [ ! -f "$gen" ]; then
+    log_skip "bin/devenv-completions is not in this checkout"
+    return 0
+  fi
+  exec bash "$gen" ${_cmd_args[@]+"${_cmd_args[@]}"}
+}
+
+cmd_version() {
+  local ref='unknown' digest='unknown'
+  if [ -d "$DEVENV_HOME/.git" ] && have git; then
+    ref=$(git -C "$DEVENV_HOME" describe --tags --always --dirty 2>/dev/null || printf 'unknown')
+  elif [ -f "$DEVENV_HOME/.tarball-install" ]; then
+    ref="${DEVENV_REF} (tarball install, no git history)"
+  fi
+  if [ -f "$DEVENV_HOME/versions.env" ]; then
+    digest=$(sha256_of "$DEVENV_HOME/versions.env" || printf 'unknown')
+  fi
+  printf 'devenv        %s\n' "$DEVENV_VERSION_LABEL"
+  printf 'checkout      %s\n' "$DEVENV_HOME"
+  printf 'ref           %s\n' "$ref"
+  printf 'versions.env  %s\n' "${digest:0:16}"
+  printf 'profile       %s\n' "$DEVENV_PROFILE"
+  printf 'platform      %s %s\n' "${OS_PRETTY:-unknown}" "${OS_ARCH_DPKG:-unknown}"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+#
+# Everything above is a function, so this file is fully parsed before any of it
+# runs — which is what makes it safe for `update` to replace this very file on
+# disk and then exec the new one.
+main() {
+  parse_args "$@"
+  apply_settings
+
+  if [ "$(id -u)" -eq 0 ] && [ "${DEVENV_ALLOW_ROOT:-0}" != 1 ]; then
+    log_error "devenv is running as root; the dotfiles it writes would land in /root."
+    log_error "Run it as your normal user — modules ask for root themselves, when they need it."
+    log_error "If this box really has no non-root user: DEVENV_ALLOW_ROOT=1 devenv $*"
+    bail 1
+  fi
+
+  # A module that failed is a REPORTED outcome, not an internal error: the summary
+  # already named it. Collect the status, drop the ERR trap and exit with it, so the
+  # last thing on the screen is the summary rather than a stack-ish trap message.
+  local rc=0
+  case ${_cmd:-install} in
+    install | '') cmd_install || rc=$? ;;
+    list | ls) cmd_list || rc=$? ;;
+    doctor) cmd_doctor || rc=$? ;;
+    update) cmd_update || rc=$? ;;
+    uninstall | remove) cmd_uninstall || rc=$? ;;
+    shell) cmd_shell ${_cmd_args[@]+"${_cmd_args[@]}"} || rc=$? ;;
+    completions) cmd_completions || rc=$? ;;
+    version) cmd_version || rc=$? ;;
+    help) usage ;;
+    *) usage_error "unknown command: ${_cmd}" ;;
+  esac
+  bail "$rc"
+}
+
+main "$@"

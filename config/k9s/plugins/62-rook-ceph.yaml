@@ -1,0 +1,83 @@
+# devops-env-config :: k9s plugins :: Rook-Ceph
+# Requires: kubectl krew install rook-ceph
+plugins:
+  ceph-status:
+    shortCut: Shift-C
+    description: ceph status
+    scopes: [cephclusters.ceph.rook.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        ns="$1"; ctx="$2"
+        {
+          kubectl rook-ceph --context "$ctx" -n "$ns" ceph status 2>&1
+          echo; echo "== osd status =="
+          kubectl rook-ceph --context "$ctx" -n "$ns" ceph osd status 2>&1
+          echo; echo "== df =="
+          kubectl rook-ceph --context "$ctx" -n "$ns" ceph df 2>&1
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $CONTEXT
+
+  ceph-health:
+    shortCut: Shift-H
+    description: rook-ceph health check
+    scopes: [cephclusters.ceph.rook.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        ns="$1"; ctx="$2"
+        kubectl rook-ceph --context "$ctx" -n "$ns" health 2>&1 | less -R
+      - --
+      - $NAMESPACE
+      - $CONTEXT
+
+  ceph-mons:
+    shortCut: Shift-M
+    description: mon endpoints + operator cfg
+    scopes: [cephclusters.ceph.rook.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        ns="$1"; ctx="$2"
+        {
+          echo "== mons =="
+          kubectl rook-ceph --context "$ctx" -n "$ns" mons 2>&1
+          echo; echo "== ceph osd tree =="
+          kubectl rook-ceph --context "$ctx" -n "$ns" ceph osd tree 2>&1
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $CONTEXT
+
+  ceph-pool-stats:
+    shortCut: Shift-C
+    description: pool stats
+    scopes: [cephblockpools.ceph.rook.io, cephfilesystems.ceph.rook.io, cephobjectstores.ceph.rook.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; ctx="$3"
+        {
+          echo "== $name =="
+          kubectl rook-ceph --context "$ctx" -n "$ns" ceph osd pool stats "$name" 2>&1
+          echo; echo "== ceph df detail =="
+          kubectl rook-ceph --context "$ctx" -n "$ns" ceph df detail 2>&1
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT

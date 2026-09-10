@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://github.com/kubecolor/kubecolor/raw/main/config-schema.json
+#
+# devops-env-config :: kubecolor
+# Installed at ~/.kube/color.yaml (override the path with $KUBECOLOR_CONFIG).
+# CREATE-IF-ABSENT: modules/35-kubernetes.sh never overwrites this file, because
+# a colour theme is something you tune by hand. Delete it and re-run
+# `devenv --only kubernetes` to get this default back.
+#
+# NEVER set `kubectl: kubecolor` here — kubecolor execs the value of that key,
+# so pointing it at itself is an infinite exec loop.
+kubectl: kubectl
+preset: dark
+objFreshThreshold: 10h # instantly shows which pods a rollout just replaced
+paging: never # keeps `kubectl get … | grep` habits intact
+theme:
+  base:
+    danger: red
+    warning: yellow
+    success: green
+    info: white
+    muted: gray:italic
+    primary: magenta
+    secondary: cyan

@@ -1,0 +1,93 @@
+# devops-env-config :: k9s plugins :: nodes
+# NOTE: k9s already binds <c> Cordon, <u> Uncordon, <r> Drain on nodes.
+plugins:
+  node-root-shell:
+    shortCut: Shift-D
+    description: Root shell on node
+    scopes: [nodes]
+    dangerous: true
+    confirm: true
+    background: false
+    command: kubectl
+    args:
+      - node-shell
+      - --context
+      - $CONTEXT
+      - -n
+      - kube-system
+      - $NAME
+
+  node-cordon-drain:
+    shortCut: Shift-K
+    description: Cordon + drain
+    scopes: [nodes]
+    dangerous: true
+    confirm: true
+    background: false
+    command: bash
+    args:
+      - -c
+      - |
+        node="$1"; ctx="$2"
+        kubectl cordon "$node" --context "$ctx"
+        kubectl drain "$node" --context "$ctx" \
+          --ignore-daemonsets --delete-emptydir-data --disable-eviction=false --timeout 15m
+        read -r -p "press enter" _
+      - --
+      - $NAME
+      - $CONTEXT
+
+  cilium-node-status:
+    shortCut: Shift-C
+    description: Cilium agent status
+    scopes: [nodes]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        node="$1"; ctx="$2"
+        kubectl cilium exec "$node" --context "$ctx" -- sh -c '
+          if command -v cilium-dbg >/dev/null 2>&1; then cli=cilium-dbg; else cli=cilium; fi
+          $cli status --verbose
+          echo; echo "== bpf endpoints =="; $cli endpoint list
+        ' 2>&1 | less -R
+      - --
+      - $NAME
+      - $CONTEXT
+
+  cilium-node-shell:
+    shortCut: Shift-H
+    description: Shell in cilium agent
+    scopes: [nodes]
+    command: kubectl
+    background: false
+    confirm: false
+    args:
+      - cilium
+      - exec
+      - --context
+      - $CONTEXT
+      - $NAME
+
+  node-pods:
+    shortCut: Shift-Z
+    description: Pods on this node
+    scopes: [nodes]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        node="$1"; ctx="$2"
+        {
+          kubectl get pods -A --context "$ctx" -o wide \
+            --field-selector "spec.nodeName=$node" --sort-by=.metadata.namespace
+          echo; echo "== allocated resources =="
+          kubectl describe node "$node" --context "$ctx" | sed -n '/Non-terminated Pods/,/^Events/p'
+        } | less -R
+      - --
+      - $NAME
+      - $CONTEXT

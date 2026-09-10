@@ -1,0 +1,108 @@
+# devops-env-config :: k9s skin :: safe-dev
+# dev / lab - green chrome, safe to break.
+k9s:
+  body:
+    fgColor: '#e6e6e6'
+    bgColor: default
+    logoColor: '#4ade80'
+    logoColorMsg: '#a6adc8'
+    logoColorInfo: '#a6e3a1'
+    logoColorWarn: '#f9e2af'
+    logoColorError: '#f38ba8'
+  prompt:
+    fgColor: '#4ade80'
+    bgColor: default
+    suggestColor: '#4ade80'
+  info:
+    fgColor: '#4ade80'
+    sectionColor: '#2f8f57'
+    cpuColor: '#89dceb'
+    memColor: '#cba6f7'
+    k9sRevColor: '#6c7086'
+  help:
+    fgColor: '#cdd6f4'
+    bgColor: '#0d2a17'
+    keyColor: '#4ade80'
+    numKeyColor: '#cba6f7'
+    sectionColor: '#a6e3a1'
+  dialog:
+    fgColor: '#cdd6f4'
+    bgColor: '#0d2a17'
+    buttonFgColor: '#001a0b'
+    buttonBgColor: '#4ade80'
+    buttonFocusFgColor: '#001a0b'
+    buttonFocusBgColor: '#ffffff'
+    labelFgColor: '#4ade80'
+    fieldFgColor: '#cdd6f4'
+  frame:
+    border:
+      fgColor: '#2f8f57'
+      focusColor: '#4ade80'
+    menu:
+      fgColor: '#cdd6f4'
+      keyColor: '#4ade80'
+      numKeyColor: '#cba6f7'
+      fgStyle: normal
+    crumbs:
+      fgColor: '#001a0b'
+      bgColor: '#4ade80'
+      activeColor: '#ffffff'
+    status:
+      newColor: '#89dceb'
+      modifyColor: '#cba6f7'
+      addColor: '#a6e3a1'
+      pendingColor: '#fab387'
+      errorColor: '#f38ba8'
+      highlightColor: '#89b4fa'
+      killColor: '#f5c2e7'
+      completedColor: '#6c7086'
+    title:
+      fgColor: '#4ade80'
+      bgColor: default
+      highlightColor: '#ffffff'
+      counterColor: '#a6e3a1'
+      filterColor: '#f5c2e7'
+  views:
+    charts:
+      bgColor: default
+      dialBgColor: default
+      chartBgColor: default
+      defaultDialColors:
+      - '#a6e3a1'
+      - '#f38ba8'
+      defaultChartColors:
+      - '#a6e3a1'
+      - '#f38ba8'
+    table:
+      fgColor: '#cdd6f4'
+      bgColor: default
+      cursorFgColor: '#001a0b'
+      cursorBgColor: '#4ade80'
+      markColor: '#f9e2af'
+      header:
+        fgColor: '#2f8f57'
+        bgColor: default
+        sorterColor: '#f9e2af'
+        selectedSortColumnColor: '#a6e3a1'
+    xray:
+      fgColor: '#cdd6f4'
+      bgColor: default
+      cursorColor: '#4ade80'
+      cursorTextColor: '#11111b'
+      graphicColor: '#f9e2af'
+    yaml:
+      keyColor: '#4ade80'
+      colonColor: '#6c7086'
+      valueColor: '#cdd6f4'
+    picker:
+      mainColor: '#cdd6f4'
+      focusColor: '#4ade80'
+      shortcutColor: '#f9e2af'
+    logs:
+      fgColor: '#cdd6f4'
+      bgColor: default
+      indicator:
+        fgColor: '#4ade80'
+        bgColor: default
+        toggleOnColor: '#a6e3a1'
+        toggleOffColor: '#6c7086'

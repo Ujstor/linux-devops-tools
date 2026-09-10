@@ -1,0 +1,21 @@
+# profiles/ci.list — everything a container can actually do.
+#
+# Dotfiles, apt repositories and release binaries; no docker daemon, no systemd,
+# no WSL, no interactive login helpers. This is what tests/docker/matrix.sh runs on
+# debian:12, debian:13, ubuntu:22.04 and ubuntu:24.04, twice, to prove that a
+# second run changes nothing.
+#
+# `auth-sso` is deliberately absent: its whole job is interactive browser logins.
+
+preflight                 # 00
+base-packages             # 05
+shell                     # 10
+git                       # 15
+lang-go                   # 20
+lang-python               # 23
+kubernetes                # 35
+k8s-plugins               # 36
+k9s-config                # 37
+iac                       # 40
+cloud                     # 45
+summary                   # 99

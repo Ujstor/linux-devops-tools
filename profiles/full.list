@@ -1,0 +1,36 @@
+# profiles/full.list — devops, plus everything that is merely nice to have.
+#
+# bin/devenv turns on three feature gates for this profile, unless you already set
+# them in the environment (profiles are plain module lists; they cannot set a
+# variable themselves):
+#
+#     KREW_EXTRAS=1      the optional kubectl plugin roster
+#     INSTALL_PACKER=1   packer alongside terraform
+#     INSTALL_EXTRAS=1   the optional apt extras
+#
+# `brew` is audit-only here: it lists your Homebrew leaves and prints the map to
+# their apt/release equivalents. It installs Homebrew only with INSTALL_HOMEBREW=1.
+
+preflight                 # 00
+base-packages             # 05
+shell                     # 10
+git                       # 15
+lang-go                   # 20
+lang-rust                 # 21
+lang-node                 # 22
+lang-python               # 23
+repo-dev                  # 28 — shellcheck, shfmt, pre-commit (this repo's own CI needs)
+containers                # 30
+kubernetes                # 35
+k8s-plugins               # 36
+k9s-config                # 37
+auth-sso                  # 38
+iac                       # 40
+cloud                     # 45
+editors                   # 50
+media                     # 55 — ffmpeg, imagemagick, poppler, 7zip (yazi's previewers)
+ai                        # 6x — Claude Code (base install, native installer)
+wsl                       # 70
+doctor                    # 90
+brew                      # 95 — audit and migration map only
+summary                   # 99

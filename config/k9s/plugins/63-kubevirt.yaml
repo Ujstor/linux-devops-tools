@@ -1,0 +1,115 @@
+# devops-env-config :: k9s plugins :: KubeVirt (virtctl)
+plugins:
+  vm-console:
+    shortCut: Shift-C
+    description: Serial console
+    scopes: [virtualmachines.kubevirt.io, virtualmachineinstances.kubevirt.io]
+    command: virtctl
+    background: false
+    confirm: false
+    args: [console, --context, $CONTEXT, -n, $NAMESPACE, $NAME]
+
+  vm-vnc:
+    shortCut: Shift-K
+    description: VNC console
+    scopes: [virtualmachines.kubevirt.io, virtualmachineinstances.kubevirt.io]
+    command: virtctl
+    background: false
+    confirm: false
+    args: [vnc, --context, $CONTEXT, -n, $NAMESPACE, $NAME]
+
+  vm-guestinfo:
+    shortCut: Shift-H
+    description: Guest agent info
+    scopes: [virtualmachines.kubevirt.io, virtualmachineinstances.kubevirt.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; ctx="$3"
+        {
+          echo "== guest os =="
+          virtctl guestosinfo --context "$ctx" -n "$ns" "$name" 2>&1
+          echo; echo "== filesystems =="
+          virtctl fslist --context "$ctx" -n "$ns" "$name" 2>&1
+          echo; echo "== logged-in users =="
+          virtctl userlist --context "$ctx" -n "$ns" "$name" 2>&1
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT
+
+  vm-power:
+    shortCut: Shift-U
+    description: Start / stop VM
+    scopes: [virtualmachines.kubevirt.io]
+    dangerous: true
+    confirm: true
+    background: false
+    command: bash
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; ctx="$3"
+        phase="$(kubectl get virtualmachines.kubevirt.io "$name" --context "$ctx" -n "$ns" \
+                  -o jsonpath='{.status.printableStatus}')"
+        echo "current: ${phase:-unknown}"
+        case "$phase" in
+          Running|Starting|Migrating) virtctl stop  --context "$ctx" -n "$ns" "$name" ;;
+          *)                          virtctl start --context "$ctx" -n "$ns" "$name" ;;
+        esac
+        read -r -p "press enter" _
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT
+
+  vm-restart:
+    shortCut: Shift-R
+    description: Restart VM
+    scopes: [virtualmachines.kubevirt.io]
+    dangerous: true
+    confirm: true
+    background: true
+    overwriteOutput: true
+    command: virtctl
+    args: [restart, --context, $CONTEXT, -n, $NAMESPACE, $NAME]
+
+  vmi-migrate:
+    shortCut: Shift-M
+    description: Live migrate
+    scopes: [virtualmachines.kubevirt.io, virtualmachineinstances.kubevirt.io]
+    dangerous: true
+    confirm: true
+    background: true
+    overwriteOutput: true
+    command: virtctl
+    args: [migrate, --context, $CONTEXT, -n, $NAMESPACE, $NAME]
+
+  vmi-pause:
+    # MUST-FIX C1: was Shift-P = k9s core "Sort Namespace" (bound in every
+    # all-namespace view), so the binding was dropped there and only worked in
+    # a single namespace. Shift-Z ("zzz") is unused in this scope.
+    shortCut: Shift-Z
+    description: Pause / unpause
+    scopes: [virtualmachineinstances.kubevirt.io]
+    dangerous: true
+    confirm: true
+    background: false
+    command: bash
+    args:
+      - -c
+      - |
+        ns="$1"; name="$2"; ctx="$3"
+        paused="$(kubectl get virtualmachineinstances.kubevirt.io "$name" --context "$ctx" -n "$ns" \
+                   -o jsonpath='{.status.conditions[?(@.type=="Paused")].status}')"
+        if [ "$paused" = "True" ]; then virtctl unpause vmi --context "$ctx" -n "$ns" "$name"
+        else virtctl pause vmi --context "$ctx" -n "$ns" "$name"; fi
+        read -r -p "press enter" _
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT

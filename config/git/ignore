@@ -1,0 +1,30 @@
+# devops-env-config :: global gitignore, shipped to ~/.config/git/ignore.
+# git reads this path by default when XDG_CONFIG_HOME applies, so no
+# core.excludesFile key is set — one less thing in your ~/.gitconfig.
+
+# editor / OS
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# agent + tooling scratch that must never reach a fleet repo
+.claude/settings.local.json
+.crush/
+.aider*
+.envrc.local
+.direnv/
+
+# terraform / k8s local state that is easy to commit by accident
+.terraform/
+*.tfstate
+*.tfstate.backup
+crash.log
+kubeconfig
+*.kubeconfig
+
+# python / node
+__pycache__/
+.venv/
+node_modules/

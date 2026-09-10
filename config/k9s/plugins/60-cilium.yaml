@@ -1,0 +1,76 @@
+# devops-env-config :: k9s plugins :: Cilium
+# Requires: kubectl krew install cilium  (kubectl-cilium: exec into the agent on a node)
+plugins:
+  cnp-matching-endpoints:
+    shortCut: Shift-M
+    description: Endpoints matched by policy
+    scopes: [ciliumnetworkpolicies.cilium.io, ciliumclusterwidenetworkpolicies.cilium.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; res="$3"; ctx="$4"
+        nsf=(); [ -n "$ns" ] && nsf=(-n "$ns")
+        sel="$(kubectl get "$res.cilium.io" "$name" --context "$ctx" "${nsf[@]}" -o json \
+                | jq -r '[(.spec.endpointSelector.matchLabels // {}) | to_entries[]
+                          | "\(.key|sub("^any\\.";""))=\(.value)"] | join(",")')"
+        {
+          echo "== policy $res/$name  selector: ${sel:-<all endpoints>}"
+          echo
+          if [ -n "$sel" ]; then
+            kubectl get pods --context "$ctx" "${nsf[@]}" -l "$sel" -o wide
+          else
+            kubectl get ciliumendpoints --context "$ctx" "${nsf[@]}"
+          fi
+          echo; echo "== spec =="
+          kubectl get "$res.cilium.io" "$name" --context "$ctx" "${nsf[@]}" -o yaml | kubectl neat
+        } | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $RESOURCE_NAME
+      - $CONTEXT
+
+  cep-identity:
+    shortCut: Shift-C
+    description: Endpoint identity + policy
+    scopes: [ciliumendpoints.cilium.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        ns="$1"; name="$2"; ctx="$3"
+        kubectl get ciliumendpoints.cilium.io "$name" --context "$ctx" -n "$ns" -o json \
+          | jq '{name: .metadata.name, identity: .status.identity, state: .status.state,
+                 networking: .status.networking, encryption: .status.encryption,
+                 policy: .status.policy}' \
+          | less -R
+      - --
+      - $NAMESPACE
+      - $NAME
+      - $CONTEXT
+
+  ciliumnode-ipam:
+    shortCut: Shift-C
+    description: Cilium node IPAM / health
+    scopes: [ciliumnodes.cilium.io]
+    command: bash
+    background: false
+    confirm: false
+    args:
+      - -c
+      - |
+        set -o pipefail
+        name="$1"; ctx="$2"
+        kubectl get ciliumnodes.cilium.io "$name" --context "$ctx" -o json \
+          | jq '{addresses: .spec.addresses, ipam: .spec.ipam, health: .status.ipam, encryption: .spec.encryption}' \
+          | less -R
+      - --
+      - $NAME
+      - $CONTEXT

@@ -1,0 +1,11 @@
+# devops-env-config :: bookmarks for `web <name>`.  PLACEHOLDERS ONLY.
+# Format: name<TAB>url. Lines starting with # are ignored.
+# Seeded once to ~/.config/devops-env/bookmarks (mode 0600, gitignored) and never
+# overwritten. Replace every example.com below with your own hosts.
+#
+grafana	https://grafana.example.com
+argocd	https://argocd.example.com
+keycloak	https://sso.example.com
+gitlab	https://gitlab.example.com
+openbao	https://openbao.example.com:8200
+zabbix	https://zabbix.example.com

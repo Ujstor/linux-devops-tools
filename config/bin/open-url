@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# open-url — the single URL/file opener on this box.  devops-env-config
+#
+# Reached three ways:
+#   1. $BROWSER            (az, gh, glab — they honour it)
+#   2. the ~/.local/bin symlinks xdg-open / x-www-browser / www-browser /
+#      sensible-browser  (kubelogin, argocd, bao — they IGNORE $BROWSER and
+#      exec these names directly)
+#   3. --browser-command=open-url as an explicit exec arg
+#
+# CONTRACT, all three load-bearing:
+#   * NEVER write to stdout  (kubectl parses an exec plugin's stdout as JSON)
+#   * ALWAYS exit 0          (pkg/browser reads non-zero as "no browser"; argocd aborts)
+#   * NEVER block            (anything that grabs the TTY deadlocks the caller)
+# `set -e` is deliberately OFF here: these shims probe several backends and a
+# failing probe must degrade to the next one, never abort the user's login flow.
+set -uo pipefail
+
+_lib="${DEVENV_LIB_DIR:-$HOME/.local/lib/devops-env}/detect.sh"
+# shellcheck source=/dev/null
+if ! . "$_lib" 2>/dev/null; then
+  # A missing lib must never break a login flow: degrade to print-only.
+  dv_tty() { if { : >/dev/tty; } 2>/dev/null; then cat >/dev/tty; else cat >&2; fi; }
+  dv_browser_mode() { printf print; }
+fi
+
+case "${1:-}" in
+  '')
+    printf 'usage: open-url <url|path>\n       open-url --mode\n' >&2
+    exit 2
+    ;;
+  -h | --help)
+    printf 'usage: open-url <url|path>\n       open-url --mode\n' >&2
+    exit 0
+    ;;
+  --mode)
+    dv_browser_mode
+    printf '\n'
+    exit 0
+    ;;
+esac
+url=$1
+
+ou_print() {
+  local u=$1 n
+  n=$(printf '%s' "$u" | wc -c | tr -d ' ')
+  dv_tty <<EOF
+
++-- open this URL in the browser on your laptop ------------------------------
+$u
++-- ($n chars) ---------------------------------------------------------------
+
+EOF
+  if [ "${DEVENV_BROWSER_QR:-0}" = 1 ] && command -v qrencode >/dev/null 2>&1; then
+    qrencode -t ANSIUTF8 -- "$u" 2>/dev/null | dv_tty || true
+  fi
+  # Best effort: also push it to the LAPTOP's clipboard over OSC 52.
+  [ "${DEVENV_BROWSER_NO_CLIP:-0}" = 1 ] \
+    || printf '%s' "$u" | "$HOME/.local/bin/clip" 2>/dev/null || true
+  return 0
+}
+
+ou_wsl() {
+  local u=$1 ps q
+  if command -v wslview >/dev/null 2>&1; then
+    wslview "$u" >/dev/null 2>&1 && return 0
+  fi
+  if ps=$(dv_win_powershell); then
+    # PowerShell single-quote escape. NEVER "..." — $ and ` expand there.
+    q=${u//\'/\'\'}
+    "$ps" -NoProfile -NonInteractive -Command "Start-Process '$q'" >/dev/null 2>&1 && return 0
+  fi
+  if [ -n "${DEVENV_BROWSER_WIN_EXE:-}" ] && [ -x "$DEVENV_BROWSER_WIN_EXE" ]; then
+    "$DEVENV_BROWSER_WIN_EXE" "$u" >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+
+ou_gui() {
+  local u=$1 b
+  b=$(dv_gui_browser) || return 1
+  # Pin BROWSER to the REAL browser: /usr/bin/xdg-open honours $BROWSER, and
+  # without this it would fall through its generic chain back into our own
+  # ~/.local/bin/x-www-browser shim.
+  if [ -x /usr/bin/xdg-open ]; then
+    BROWSER="$b" /usr/bin/xdg-open "$u" >/dev/null 2>&1 && return 0
+  fi
+  "$b" "$u" >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+  return 0
+}
+
+# Re-entrancy guard: if a handler chain lands back here, stop and print.
+if [ -n "${_DEVENV_OPEN_URL:-}" ]; then
+  ou_print "$url"
+  exit 0
+fi
+export _DEVENV_OPEN_URL=1
+
+case "$(dv_browser_mode)" in
+  command)
+    if [ -n "${DEVENV_BROWSER_CMD:-}" ]; then
+      # shellcheck disable=SC2086  # word-split on purpose: the override may carry args
+      $DEVENV_BROWSER_CMD "$url" >/dev/null 2>&1 || ou_print "$url"
+    else
+      ou_print "$url"
+    fi
+    ;;
+  wsl) ou_wsl "$url" || ou_print "$url" ;;
+  gui) ou_gui "$url" || ou_print "$url" ;;
+  *) ou_print "$url" ;;
+esac
+exit 0

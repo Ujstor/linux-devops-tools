@@ -1,0 +1,601 @@
+#!/usr/bin/env bash
+#
+# tests/docker/entry.sh — the container test, run as root INSIDE the image.
+#
+# It answers the two questions that matter and cannot be answered by linting:
+#
+#   1. Is `--dry-run` really a no-op?      (MUST-FIX S6)
+#   2. Is a second run really a no-op?     (idempotency)
+#
+# Both are answered by FINGERPRINTING THE FILESYSTEM and diffing, and the order
+# is the whole point:
+#
+#       fingerprint  ->  fp.0      BEFORE the dry run
+#       dry run
+#       fingerprint  ->  fp.1      must equal fp.0
+#       install (1st)
+#       fingerprint  ->  fp.2
+#       install (2nd)
+#       fingerprint  ->  fp.3      must equal fp.2
+#
+# An earlier draft of this test took its first fingerprint AFTER the dry run and
+# compared it with itself, which can never fail. Do not "simplify" it back.
+#
+# Usage (normally through tests/docker/matrix.sh):
+#     docker run --rm -v "$PWD:/src:ro" debian:12 bash /src/tests/docker/entry.sh
+#
+# Environment:
+#     PROFILE       profile installed for real           (default minimal)
+#     DRY_PROFILE   profile used for the dry run         (default ci)
+#     TEST_USER     the unprivileged user                (default tester)
+#     KEEP_GOING    1 = run every check, report at the end (default 1)
+#     FP_HASH_MAX   max file size to checksum, bytes     (default 4194304)
+
+set -euo pipefail
+
+PROFILE=${PROFILE:-minimal}
+DRY_PROFILE=${DRY_PROFILE:-ci}
+TEST_USER=${TEST_USER:-tester}
+KEEP_GOING=${KEEP_GOING:-1}
+FP_HASH_MAX=${FP_HASH_MAX:-4194304}
+
+SRC=${SRC:-/src}
+WORK=/var/tmp/devenv-test
+HOME_DIR=/home/$TEST_USER
+REPO=$HOME_DIR/repo
+
+FAILURES=0
+
+# Every PASS is counted, not just every FAIL. "0 failures" is also what a run
+# that checked NOTHING reports — an early `return` in one of the check functions,
+# a branch that skipped them all, an image where every probe was inconclusive —
+# and it exits 0 exactly like a real pass. CHECKS_MIN below is the floor.
+CHECKS=0
+CHECKS_MIN=${CHECKS_MIN:-10}
+
+# Byte order, not locale order: two fingerprints must sort identically.
+export LC_ALL=C
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+say() { printf '\n=== %s\n' "$*"; }
+info() { printf '    %s\n' "$*"; }
+
+ok() {
+  CHECKS=$((CHECKS + 1))
+  printf 'PASS  %s\n' "$*"
+}
+
+bad() {
+  printf 'FAIL  %s\n' "$*" >&2
+  FAILURES=$((FAILURES + 1))
+  [ "$KEEP_GOING" = 1 ] || exit 1
+}
+
+# as_user CMD… — run a login shell command as the unprivileged user.
+# `su -l`, NOT `sudo -u`: the P1 phase below runs on a box that has no sudo at all,
+# and a helper that needs the very thing under test proves nothing.
+as_user() {
+  su -l "$TEST_USER" -c "$*"
+}
+
+# ---------------------------------------------------------------------------
+# The fingerprint
+# ---------------------------------------------------------------------------
+#
+# Two passes over the same pruned tree:
+#   metadata  type, mode, size, mtime and path for every entry
+#   content   sha256 of every regular file below FP_HASH_MAX
+#
+# A FILE's mtime is deliberately included: a writer that rewrites a file with
+# identical bytes is still a writer, and idempotency means it must not have run at
+# all. A DIRECTORY's mtime is deliberately NOT: it moves whenever anything creates
+# and removes a temp entry inside it — uv does that in ~/.local/share/uv/tools on
+# every run — and says nothing about what this repository wrote. A directory that
+# appears or disappears is still an added or removed row.
+#
+# What is excluded, and why. Only caches, logs and volatile system files —
+# never anything this repository is responsible for.
+#   the checkout        it is the input, not the result
+#   ~/.cache, ~/.npm    caches; a *read* is allowed to memoise a release tag
+#   go/pkg, .rustup     multi-gigabyte language caches
+#   uv site-packages    third-party package CONTENT inside each uv tool venv —
+#                       the same category as go/pkg and .cargo/registry. ansible
+#                       plus checkov alone put ~27,000 files here, and hashing
+#                       them twice per run is what made this test unrunnable on a
+#                       memory-constrained host. The SIGNAL is kept: the venv
+#                       directory, its pyvenv.cfg and its bin/ shims stay in the
+#                       fingerprint, ~/.local/bin/<tool> stays, and
+#                       ~/.config/uv/uv-receipt.json stays — that last one is
+#                       what caught uv reinstalling itself on every run.
+#   uv managed pythons  interpreter builds uv downloads, not something we write
+#   .krew/index         a git checkout that upstream keeps moving
+#   shell history       changes because the test itself ran commands
+#   /etc volatile files  container-managed (resolv.conf, hosts, hostname) or
+#                        regenerated by any package install (ld.so.cache)
+
+fp_prunes() {
+  local d
+  for d in \
+    "$REPO" \
+    "$HOME_DIR/.cache" "$HOME_DIR/.npm" "$HOME_DIR/go/pkg" \
+    "$HOME_DIR/.rustup" "$HOME_DIR/.cargo/registry" \
+    "$HOME_DIR/.krew/index" "$HOME_DIR/.config/nvm/.cache" \
+    "$HOME_DIR/.config/go/telemetry" \
+    "$HOME_DIR/.config/nvm/.git" "$HOME_DIR/.local/share/devops-env-config" \
+    "$HOME_DIR/.local/share/uv/python"; do
+    printf -- '-path\n%s\n-o\n' "$d"
+  done
+  # Globbed prunes. `find -path` takes a pattern, so the site-packages of every
+  # uv tool venv goes in one entry regardless of the tool or python version.
+  local g
+  for g in \
+    "$HOME_DIR/.local/share/uv/tools/*/lib/python*/site-packages" \
+    "$HOME_DIR/.local/share/uv/tools/*/lib64"; do
+    printf -- '-path\n%s\n-o\n' "$g"
+  done
+  local f
+  for f in \
+    "$HOME_DIR/.bash_history" "$HOME_DIR/.sudo_as_admin_successful" \
+    "$HOME_DIR/.wget-hsts" "$HOME_DIR/.lesshst" "$HOME_DIR/.python_history" \
+    "$HOME_DIR/.viminfo" \
+    /etc/mtab /etc/ld.so.cache /etc/.pwd.lock /etc/resolv.conf /etc/hosts \
+    /etc/hostname /etc/shadow- /etc/passwd- /etc/group- /etc/gshadow-; do
+    printf -- '-path\n%s\n-o\n' "$f"
+  done
+  # A trailing alternative so the caller can close the group with -false.
+  printf -- '-false\n'
+}
+
+fingerprint() {
+  local out=$1 root
+  local -a prune=()
+  mapfile -t prune < <(fp_prunes)
+
+  {
+    printf '## packages\n'
+    dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | sort || true
+
+    printf '## metadata\n'
+    for root in "$HOME_DIR" /etc /usr/local /opt; do
+      [ -d "$root" ] || continue
+      find "$root" \( "${prune[@]}" \) -prune -o \
+        -type d -printf 'd\t%m\t-\t-\t%p\n' -o \
+        -printf '%y\t%m\t%s\t%T@\t%p\n' 2>/dev/null | sort || true
+    done
+
+    printf '## content\n'
+    for root in "$HOME_DIR" /etc; do
+      [ -d "$root" ] || continue
+      find "$root" \( "${prune[@]}" \) -prune -o \
+        -type f -size "-$((FP_HASH_MAX / 1024))k" -print0 2>/dev/null \
+        | sort -z | xargs -0 -r sha256sum 2>/dev/null | sort -k2 || true
+    done
+  } >"$out"
+
+  fp_assert "$out"
+}
+
+# fp_assert FILE — a fingerprint of nothing is not a fingerprint.
+#
+# THIS IS THE OTHER HALF OF THE HEADER'S WARNING. Taking the first fingerprint
+# after the dry run compared a value with itself; so does taking two fingerprints
+# that are both EMPTY, and that one is invisible. Every stage above ends in
+# `2>/dev/null … || true` so one unreadable path cannot abort the run — which
+# also means a broken stage produces an empty section in total silence. Delete
+# the `-false` terminator from fp_prunes and `find` exits with "invalid
+# expression": ## metadata and ## content come out empty, in BOTH fingerprints,
+# and `--dry-run changed nothing` and `the second run changed nothing` both
+# report PASS having compared three header lines to three header lines. Measured,
+# not imagined — that edit is one token.
+#
+# So each section has to prove it collected something. The floor is deliberately
+# far below any real value (a stock debian:12 gives ~400 packages, ~40,000
+# metadata rows and ~2,000 hashes): this is a tripwire for zero, not a threshold.
+fp_assert() {
+  local out=$1 sec n broken=''
+  for sec in packages metadata content; do
+    n=$(awk -v want="## $sec" '
+      $0 == want { in_sec = 1; next }
+      /^## / { in_sec = 0 }
+      in_sec && NF { c++ }
+      END { print c + 0 }' "$out")
+    printf '    %-9s %s row(s)\n' "$sec" "$n"
+    [ "$n" -ge "${FP_MIN_ROWS:-10}" ] || broken="$broken $sec($n)"
+  done
+  [ -n "$broken" ] || return 0
+
+  bad "the fingerprint collected almost nothing:$broken"
+  printf '    A fingerprint with an empty section cannot detect a change, and two of\n' >&2
+  printf '    them diff clean — every filesystem check below would PASS having compared\n' >&2
+  printf '    nothing. Fix fp_prunes/fingerprint: a broken find expression is silent\n' >&2
+  printf '    here, its stderr goes to /dev/null and the trailing || true hides the\n' >&2
+  printf '    exit status.\n' >&2
+  exit 2
+}
+
+# compare BEFORE AFTER WHAT — a diff, with the first few offending lines shown.
+#
+# Both fingerprints have been through fp_assert by the time they arrive here, so
+# "identical" means "identical and non-empty".
+compare() {
+  local a=$1 b=$2 what=$3
+  if diff -q "$a" "$b" >/dev/null 2>&1; then
+    ok "$what"
+    return 0
+  fi
+  bad "$what"
+  printf '    the filesystem changed. First 40 differing lines:\n' >&2
+  diff -u "$a" "$b" | sed -n '1,40p' | sed 's/^/      /' >&2
+  printf '    (full fingerprints: %s and %s)\n' "$a" "$b" >&2
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
+os_id() {
+  sed -n 's/^ID=//p' /etc/os-release 2>/dev/null | tr -d '"' | head -n1
+}
+os_version() {
+  sed -n 's/^VERSION_ID=//p' /etc/os-release 2>/dev/null | tr -d '"' | head -n1
+}
+
+setup() {
+  say "image: $(os_id) $(os_version) — $(uname -m)"
+  mkdir -p "$WORK"
+
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  # NO `sudo` IN THIS LIST. All four target images ship without it, and installing
+  # it here would quietly destroy the MUST-FIX P1 case before it can be tested.
+  # grant_sudo installs it later, once check_no_sudo has run.
+  apt-get install -y -qq --no-install-recommends \
+    ca-certificates curl git xz-utils procps diffutils findutils coreutils \
+    >/dev/null
+
+  if ! id "$TEST_USER" >/dev/null 2>&1; then
+    useradd -m -s /bin/bash "$TEST_USER"
+  fi
+  # SUDO IS NOT GRANTED HERE. debian:12, debian:13, ubuntu:22.04 and ubuntu:24.04
+  # all ship WITHOUT the sudo package, which is exactly MUST-FIX P1's stock-Debian
+  # case; check_no_sudo runs first and grant_sudo hands it over afterwards.
+  if command -v sudo >/dev/null 2>&1; then
+    HAS_SUDO_AT_START=1
+    info "this image ships sudo — the P1 no-sudo case is not testable here"
+  else
+    HAS_SUDO_AT_START=0
+    info 'this image has NO sudo — MUST-FIX P1 is testable here'
+  fi
+
+  # A copy, not the mount: the installer must be free to write into its own
+  # checkout, and /src is read-only on purpose.
+  rm -rf "$REPO"
+  mkdir -p "$REPO"
+  tar -C "$SRC" --exclude=./.git -cf - . | tar -C "$REPO" -xf -
+  chown -R "$TEST_USER:$TEST_USER" "$HOME_DIR"
+
+  # Debian's minimal images ship /etc/skel/.bashrc; make sure there is one either
+  # way, so the shell module is exercised rather than skipped.
+  as_user 'touch ~/.bashrc'
+  info "checkout: $REPO"
+  info "profiles: dry-run=$DRY_PROFILE  install=$PROFILE"
+}
+
+# ---------------------------------------------------------------------------
+# The checks
+# ---------------------------------------------------------------------------
+
+check_bootstrap_help() {
+  say 'install.sh --help through a pipe (MUST-FIX S1)'
+  if as_user "cat $REPO/install.sh | bash -s -- --help" >"$WORK/help.log" 2>&1; then
+    # Exit 0 alone would also be satisfied by a bootstrapper that dies before it
+    # prints anything and happens to end on a zero status. What S1 is about is
+    # the help TEXT reaching the user, so assert the text.
+    if grep -q 'Bootstrap options (consumed here):' "$WORK/help.log"; then
+      ok 'curl-pipe style "bash -s -- --help" exits 0 and prints its help'
+    else
+      bad 'the piped --help exited 0 but printed no help text (see help.log)'
+      sed -n '1,20p' "$WORK/help.log" >&2
+    fi
+  else
+    bad 'install.sh could not run with an empty BASH_SOURCE (see help.log)'
+    sed -n '1,20p' "$WORK/help.log" >&2
+  fi
+}
+
+# check_bootstrap_pipe — MUST-FIX S1 names this exact command, so run this exact
+# command. `--help` exits before most of install.sh; `--dry-run` goes all the way
+# through argument parsing, the checkout check and the exec into bin/devenv, with
+# BASH_SOURCE empty the whole way. DEVENV_HOME points at the checkout so no clone
+# is attempted and the test needs no network.
+check_bootstrap_pipe() {
+  say 'cat install.sh | bash -s -- --dry-run (MUST-FIX S1, verbatim)'
+  if as_user "cd $REPO && DEVENV_HOME=$REPO sh -c 'cat install.sh | bash -s -- --profile $DRY_PROFILE --dry-run --yes'" \
+    >"$WORK/pipe.log" 2>&1; then
+    ok 'the piped dry run exited 0'
+  else
+    bad 'the piped dry run failed (see pipe.log)'
+    tail -n 20 "$WORK/pipe.log" >&2
+  fi
+  if grep -q 'unbound variable' "$WORK/pipe.log"; then
+    bad 'MUST-FIX S1 regression: "unbound variable" with an empty BASH_SOURCE'
+  fi
+}
+
+# check_no_sudo — MUST-FIX P1. A REAL install as a user who has no sudo at all
+# must produce one actionable paragraph and still install everything that needs no
+# root; it must never be an obscure shell error, and never a silent nothing.
+check_no_sudo() {
+  if [ "${HAS_SUDO_AT_START:-1}" != 0 ]; then
+    say 'MUST-FIX P1 (no sudo) — skipped: this image ships sudo'
+    return 0
+  fi
+  say "MUST-FIX P1: a real install with NO sudo (--profile $PROFILE --yes)"
+  local rc=0
+  as_user "cd $REPO && ./install.sh --profile $PROFILE --yes" \
+    >"$WORK/nosudo.log" 2>&1 || rc=$?
+  info "exit status: $rc"
+  if grep -qiE 'command not found|unbound variable|syntax error' "$WORK/nosudo.log"; then
+    bad 'P1: the no-sudo run produced an obscure shell error'
+    grep -niE 'command not found|unbound variable|syntax error' "$WORK/nosudo.log" | head -5 >&2
+  else
+    ok 'P1: no obscure shell error'
+  fi
+  if grep -q "sudo' is not installed" "$WORK/nosudo.log" \
+    && grep -q 'apt-get install -y sudo' "$WORK/nosudo.log" \
+    && grep -q 'DEVENV_ALLOW_ROOT=1' "$WORK/nosudo.log"; then
+    ok 'P1: the message names the problem and both ways out'
+  else
+    bad 'P1: the no-sudo message is not actionable'
+    grep -nE '\[ xx \]' "$WORK/nosudo.log" | head -10 >&2
+  fi
+  if [ -f "$HOME_DIR/.bashrc.d/00-init.bash" ]; then
+    ok 'P1: the modules that need no root still did their work'
+  else
+    bad 'P1: nothing at all was installed on the no-sudo box'
+  fi
+}
+
+# grant_sudo — hand the test user sudo for the phases that need root.
+grant_sudo() {
+  say 'granting the test user sudo'
+  apt-get install -y -qq --no-install-recommends sudo >/dev/null 2>&1 \
+    || bad 'could not install sudo'
+  printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$TEST_USER" >"/etc/sudoers.d/$TEST_USER"
+  chmod 0440 "/etc/sudoers.d/$TEST_USER"
+  if as_user 'sudo -n true' >/dev/null 2>&1; then
+    ok 'the test user can now sudo'
+  else
+    bad 'sudo is installed but the test user still cannot use it'
+  fi
+}
+
+check_dry_run() {
+  say 'fingerprint BEFORE the dry run'
+  fingerprint "$WORK/fp.0"
+  info "$(wc -l <"$WORK/fp.0") lines"
+
+  say "dry run: --profile $DRY_PROFILE --dry-run --yes"
+  if as_user "cd $REPO && ./install.sh --profile $DRY_PROFILE --dry-run --yes" \
+    >"$WORK/dry.log" 2>&1; then
+    ok 'the dry run exited 0'
+  else
+    bad "the dry run exited $? (see dry.log)"
+    tail -n 30 "$WORK/dry.log" >&2
+  fi
+
+  say 'fingerprint AFTER the dry run'
+  fingerprint "$WORK/fp.1"
+  compare "$WORK/fp.0" "$WORK/fp.1" '--dry-run changed nothing (MUST-FIX S6)' || true
+}
+
+check_install_twice() {
+  say "install: --profile $PROFILE --yes (first run)"
+  if as_user "cd $REPO && ./install.sh --profile $PROFILE --yes" \
+    >"$WORK/run1.log" 2>&1; then
+    ok 'the first run exited 0'
+  else
+    bad "the first run exited $? (see run1.log)"
+    tail -n 40 "$WORK/run1.log" >&2
+  fi
+  fingerprint "$WORK/fp.2"
+
+  say "install: --profile $PROFILE --yes (second run)"
+  if as_user "cd $REPO && ./install.sh --profile $PROFILE --yes" \
+    >"$WORK/run2.log" 2>&1; then
+    ok 'the second run exited 0'
+  else
+    bad "the second run exited $? (see run2.log)"
+    tail -n 40 "$WORK/run2.log" >&2
+  fi
+  fingerprint "$WORK/fp.3"
+
+  compare "$WORK/fp.2" "$WORK/fp.3" 'the second run changed nothing' || true
+}
+
+# profile_has MODULE — true when the installed profile lists that module.
+#
+# A MISSING profile list is not "the profile does not list that module": it is a
+# broken checkout, and answering "no" to every question would turn the caller's
+# assertion into an info line. Say so and stop.
+profile_has() {
+  local list="$REPO/profiles/$PROFILE.list"
+  [ -f "$list" ] || {
+    bad "no such profile list: profiles/$PROFILE.list — the checkout is incomplete"
+    exit 2
+  }
+  grep -qE "^[[:space:]]*$1([[:space:]]|#|\$)" "$list"
+}
+
+check_shell_integration() {
+  say 'shell integration'
+
+  # `grep -c` prints 0 AND exits 1 when it matches nothing, so `|| printf '0'`
+  # appended a second zero and $blocks became the two-line string "0\n0".
+  # Counting the lines ourselves keeps it a number.
+  local blocks
+  blocks=$(grep -c '^# >>> devops-env-config' "$HOME_DIR/.bashrc" 2>/dev/null) || blocks=0
+  if [ "$blocks" = 1 ]; then
+    ok 'exactly one managed block in ~/.bashrc'
+  elif profile_has shell; then
+    bad "expected 1 managed block in ~/.bashrc, found $blocks"
+  else
+    info "profile '$PROFILE' does not include the shell module — no block expected"
+  fi
+
+  # Sourcing ~/.bashrc twice must not duplicate a PATH entry. `bash -i` sources it
+  # once by itself, and the explicit source below is the second time.
+  local path dups
+  path=$(sudo -u "$TEST_USER" -H bash -i -c \
+    '. "$HOME/.bashrc"; printf "PATHDUMP:%s\n" "$PATH"' \
+    </dev/null 2>/dev/null | sed -n 's/^PATHDUMP://p' | tail -n1)
+  if [ -z "$path" ]; then
+    # This used to `info` and return 0, which made the WORST outcome the quiet
+    # one: an interactive shell that prints no PATH is a ~/.bashrc that died
+    # while being sourced — a `set -e` in a drop-in, an unbound variable, a
+    # syntax error — which is precisely what this check exists to catch. All 13
+    # recorded container runs read a PATH here, so an empty one is a finding.
+    bad 'no PATH came back from an interactive shell — ~/.bashrc did not survive being sourced'
+    sudo -u "$TEST_USER" -H bash -i -c '. "$HOME/.bashrc"' </dev/null 2>&1 \
+      | tail -n 20 | sed 's/^/      /' >&2
+    return 0
+  fi
+  dups=$(printf '%s' "$path" | tr ':' '\n' | grep -v '^$' | sort | uniq -d || true)
+  if [ -z "$dups" ]; then
+    ok 'no duplicate PATH entries after two sources of ~/.bashrc'
+  else
+    bad "duplicate PATH entries: $(printf '%s' "$dups" | tr '\n' ' ')"
+  fi
+}
+
+check_cli() {
+  say 'the CLI still works on the installed box'
+  local devenv="$REPO/bin/devenv"
+  local n
+
+  # EXIT 0 IS NOT THE ASSERTION HERE. `devenv list` that prints nothing and exits
+  # 0 is a registry that resolved no module — the failure this check is for — and
+  # a status-only test calls it a pass while cheerfully printing "0 module(s)".
+  if as_user "$devenv list" >"$WORK/list.tsv" 2>/dev/null; then
+    n=$(grep -c . "$WORK/list.tsv") || n=0
+    if [ "$n" -gt 0 ]; then
+      ok "devenv list -> $n module(s) on stdout"
+    else
+      bad 'devenv list exited 0 but printed no module at all'
+    fi
+  else
+    bad 'devenv list failed'
+  fi
+
+  if as_user "$devenv version" >"$WORK/version.txt" 2>&1; then
+    if [ -s "$WORK/version.txt" ]; then
+      ok "devenv version -> $(head -n1 "$WORK/version.txt")"
+    else
+      bad 'devenv version exited 0 but printed nothing'
+    fi
+  else
+    bad 'devenv version failed'
+  fi
+
+  # doctor reports; a WARN is not a test failure. A FAIL is.
+  #
+  # THIS CHECK HAD NO FAILING INPUT. `devenv doctor` exits 0 whatever it finds —
+  # modules/90-doctor.sh says so, and adds "Set DEVENV_DOCTOR_STRICT=1 to make
+  # any FAIL exit non-zero (that is the form to use in CI)". This is CI, and it
+  # was using the other form and then asserting `rc -le 1`: 0 is the only status
+  # doctor can return short of a crash, so the assertion was satisfied by every
+  # outcome, including a doctor that reported ten failures on the box the two
+  # install runs above had just built. Use the CI form, and read the count.
+  local rc=0
+  as_user "DEVENV_DOCTOR_STRICT=1 $devenv doctor" >"$WORK/doctor.log" 2>&1 || rc=$?
+  local summary
+  summary=$(sed -n 's/.*checks: \([0-9]* ok, [0-9]* warning(s), [0-9]* failure(s)\).*/\1/p' \
+    "$WORK/doctor.log" | tail -n1)
+  if [ -z "$summary" ]; then
+    # No summary line means doctor did not reach its own end — the shape the
+    # old `rc -le 1` test would have called a pass.
+    bad "devenv doctor printed no summary line (exit $rc) — see doctor.log"
+    tail -n 30 "$WORK/doctor.log" >&2
+    return 0
+  fi
+  info "doctor: $summary (strict)"
+
+  # KNOWN, AND ON PURPOSE VISIBLE. Turning the strict form on for the first time
+  # surfaced 12 failures that had been reported on every green run since this
+  # test was written: modules/90-doctor.sh check_sso `fail`s for each of the 12
+  # browser/clipboard shims whenever they are absent, but this box installs
+  # PROFILE=minimal, which does not include the auth-sso module that puts them
+  # there. That is a doctor severity bug — "this profile never installed it" is
+  # not the same as "it is broken" — and it belongs in 90-doctor.sh, not here.
+  #
+  # Until it is fixed, exactly that class is tolerated and NOTHING ELSE IS. The
+  # count is printed above on every run so it cannot rot quietly, and a 13th
+  # failure of any other kind fails this check.
+  # Counting, not grepping the error lines: under STRICT the module runner adds
+  # its own "failed (exit 1) at doctor:NNN" traces, which restate the one
+  # non-zero exit and are not findings. Doctor's own counter is the authority.
+  local shims='open-url|clip|clip-paste|sso-login|sso-kubeconfig-add|web'
+  shims="$shims|xdg-open|x-www-browser|www-browser|sensible-browser|pbcopy|pbpaste"
+  local fails shim_fails
+  fails=${summary#*warning(s), }
+  fails=${fails%% *}
+  shim_fails=$(grep -cE "missing or not executable: .*/($shims)\$" "$WORK/doctor.log") \
+    || shim_fails=0
+  if [ "$fails" -eq "$shim_fails" ]; then
+    ok "devenv doctor: $summary — all $shim_fails are auth-sso shims this profile omits"
+  else
+    bad "devenv doctor: $summary — $((fails - shim_fails)) failure(s) this profile does not explain"
+    grep -E '\[ xx \]' "$WORK/doctor.log" \
+      | grep -vE "missing or not executable: .*/($shims)\$" \
+      | grep -vE 'failed \(exit [0-9]+\)|command: return ' \
+      | head -10 | sed 's/^/      /' >&2
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+main() {
+  [ "$(id -u)" -eq 0 ] || {
+    printf 'entry.sh must run as root inside a throwaway container\n' >&2
+    exit 2
+  }
+  [ -f "$SRC/install.sh" ] || {
+    # shellcheck disable=SC2016  # literal usage text, nothing to expand
+    printf 'no checkout at %s — mount it with -v "$PWD:/src:ro"\n' "$SRC" >&2
+    exit 2
+  }
+
+  setup
+  check_bootstrap_help
+  check_bootstrap_pipe
+  check_dry_run
+  check_no_sudo
+  grant_sudo
+  check_install_twice
+  check_shell_integration
+  check_cli
+
+  say 'result'
+  if [ "$FAILURES" -eq 0 ] && [ "$CHECKS" -lt "$CHECKS_MIN" ]; then
+    printf 'only %d check(s) actually ran on %s %s, expected at least %d\n' \
+      "$CHECKS" "$(os_id)" "$(os_version)" "$CHECKS_MIN" >&2
+    printf 'Zero failures out of almost no checks is not a pass. Refusing to report one.\n' >&2
+    printf 'logs and fingerprints are in %s\n' "$WORK" >&2
+    return 1
+  fi
+  if [ "$FAILURES" -eq 0 ]; then
+    printf 'ALL %d CHECKS PASSED on %s %s\n' "$CHECKS" "$(os_id)" "$(os_version)"
+    return 0
+  fi
+  printf '%d CHECK(S) FAILED on %s %s\n' "$FAILURES" "$(os_id)" "$(os_version)" >&2
+  printf 'logs and fingerprints are in %s\n' "$WORK" >&2
+  return 1
+}
+
+main "$@"

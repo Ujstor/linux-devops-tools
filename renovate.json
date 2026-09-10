@@ -1,0 +1,170 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "HOW THIS REPOSITORY IS PINNED.",
+    "versions.env is the single pin file: ~55 KEY=value lines and nothing else in the repo pins anything. It is plain shell (sourced with `set -a`), so it has no package manifest for Renovate to read and none of Renovate's built-in managers can see it.",
+    "What makes it readable is the annotation directly above each pin: `# renovate: datasource=<ds> depName=<name>`, optionally followed by `extractVersion=` and `versioning=`, then a trailing `# ...` note. The customManager below turns exactly that pair of lines into a dependency.",
+    "THE ADJACENCY RULE: the annotation must be the line IMMEDIATELY above its pin, with nothing between them. The regex matches `annotation\\nKEY=value` as one unit, and tools/bump-versions.sh parses the same way, so a comment inserted between the two silently removes the pin from BOTH. Put explanatory prose ABOVE the annotation, never below it.",
+    "Every pin that cannot have a datasource carries a `# no-datasource: <why>` line in the same adjacent position instead: apt signing-key digests, boolean feature gates, branch refs, a rustup channel, a filesystem path, the k8s MINOR STREAM. Those are considered-and-rejected, not missed.",
+    "PIN VALUES THAT ARE NOT VERSIONS: `apt` means the vendor apt repo decides and `latest` means resolved at install time. Both keep their annotation so the upstream is recorded for a reader, and the packageRule below disables updates for them so Renovate never rewrites the sentinel."
+  ],
+  "extends": [
+    "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Read versions.env: a `# renovate:` annotation plus the pin on the very next line.",
+      "managerFilePatterns": [
+        "/^versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate:[ \\t]+datasource=(?<datasource>\\S+)[ \\t]+depName=(?<depName>\\S+)(?:[ \\t]+extractVersion=(?<extractVersion>\\S+))?(?:[ \\t]+versioning=(?<versioning>\\S+))?[^\\n]*\\n[A-Z][A-Z0-9_]*=(?<currentValue>\\S+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Sentinel pins. `apt` (the vendor repo decides) and `latest` (resolved at install time) are deliberate values, not versions; the annotation exists only so a reader can find the upstream.",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchCurrentValue": "/^(apt|latest)$/",
+      "enabled": false
+    },
+    {
+      "description": "Language runtimes: Go, Node, and the managers that install them.",
+      "matchDepNames": [
+        "go",
+        "node",
+        "nvm-sh/nvm",
+        "astral-sh/uv",
+        "jdx/mise"
+      ],
+      "groupName": "language runtimes"
+    },
+    {
+      "description": "Kubernetes CLI tooling installed by modules/35-kubernetes.sh.",
+      "matchDepNames": [
+        "kubernetes-sigs/krew",
+        "kubernetes-sigs/kind",
+        "kubernetes-sigs/kustomize",
+        "kubernetes-sigs/cri-tools",
+        "derailed/k9s",
+        "kubecolor/kubecolor",
+        "k3d-io/k3d",
+        "yannh/kubeconform",
+        "cilium/cilium-cli",
+        "cilium/hubble",
+        "argoproj/argo-cd",
+        "Azure/kubelogin",
+        "CrunchyData/postgres-operator-client",
+        "velero-io/velero",
+        "wagoodman/dive",
+        "mikefarah/yq",
+        "yonahd/kor",
+        "stackrox/kube-linter",
+        "aquasecurity/kube-bench",
+        "containerd/nerdctl",
+        "bitnami-labs/sealed-secrets",
+        "fullstorydev/grpcurl"
+      ],
+      "groupName": "kubernetes tools"
+    },
+    {
+      "description": "Helm plugins (diff, unittest, schema, secrets) plus helm-docs, which is a standalone binary rather than a plugin but is owned by the same module.",
+      "matchDepNames": [
+        "databus23/helm-diff",
+        "helm-unittest/helm-unittest",
+        "losisin/helm-values-schema-json",
+        "jkroepke/helm-secrets",
+        "norwoodj/helm-docs"
+      ],
+      "groupName": "helm plugins"
+    },
+    {
+      "description": "IaC and security tooling. terraform and trivy are pinned `apt` and are disabled above; they stay listed so the group is complete.",
+      "matchDepNames": [
+        "hashicorp/terraform",
+        "terraform-linters/tflint",
+        "terraform-docs/terraform-docs",
+        "aquasecurity/trivy",
+        "openbao/openbao"
+      ],
+      "groupName": "iac and security tools"
+    },
+    {
+      "description": "The GO_TOOL_* family, installed with `go install MODULE@VERSION`.",
+      "matchDepNames": [
+        "google/go-containerregistry",
+        "golang.org/x/tools",
+        "swaggo/swag",
+        "a-h/templ",
+        "Melkeydev/go-blueprint",
+        "dundee/gdu",
+        "hetznercloud/cli",
+        "mvdan.cc/sh/v3"
+      ],
+      "groupName": "go-installed tools"
+    },
+    {
+      "description": "Shell, editor and general CLI tooling.",
+      "matchDepNames": [
+        "neovim/neovim",
+        "tmux/tmux",
+        "eza-community/eza",
+        "sxyazi/yazi",
+        "fastfetch-cli/fastfetch",
+        "starship/starship",
+        "tealdeer-rs/tealdeer",
+        "dandavison/delta",
+        "ajeetdsouza/zoxide",
+        "junegunn/fzf",
+        "ryanoasis/nerd-fonts",
+        "golangci/golangci-lint",
+        "gitlab-org/cli",
+        "playwright"
+      ],
+      "groupName": "shell and CLI tools"
+    },
+    {
+      "description": "AI agents and the Spec Kit ref, all opt-in profiles.",
+      "matchDepNames": [
+        "anomalyco/opencode",
+        "charmbracelet/crush",
+        "github/spec-kit"
+      ],
+      "groupName": "ai agents"
+    },
+    {
+      "description": "HELM_VERSION is `# pin-policy: manual`. helm/helm's current release is already v4.x and this is a bootstrap script, so Renovate must never propose the major. Raise this ceiling deliberately, together with modules/35-kubernetes.sh.",
+      "matchDepNames": [
+        "helm/helm"
+      ],
+      "groupName": "helm (manual major policy)",
+      "allowedVersions": "<4.0.0"
+    },
+    {
+      "description": "VIRTCTL_VERSION is `# pin-policy: manual`: it MUST match the cluster's KubeVirt version, which Renovate cannot know. Surfaced on the dependency dashboard, never auto-PR'd.",
+      "matchDepNames": [
+        "kubevirt/kubevirt"
+      ],
+      "groupName": "kubevirt (manual, must match the cluster)",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "yonahd/kor publishes the Helm CHART as kor-X.Y.Z in the same repository as the CLI's vX.Y.Z tags, and its releases/latest points at the chart. Restrict candidates to the CLI tag shape so a chart release can never be offered as a CLI bump.",
+      "matchDepNames": [
+        "yonahd/kor"
+      ],
+      "allowedVersions": "/^v[0-9]+\\.[0-9]+\\.[0-9]+$/"
+    },
+    {
+      "description": "kubernetes-sigs/kustomize is a monorepo whose real tags are kustomize/vX.Y.Z. The annotation's extractVersion strips the component prefix so Renovate writes back the bare vX.Y.Z that KUSTOMIZE_VERSION holds and modules/35-kubernetes.sh re-prefixes. Only kustomize/ tags may be offered.",
+      "matchDepNames": [
+        "kubernetes-sigs/kustomize"
+      ],
+      "allowedVersions": "/^v[0-9]+\\.[0-9]+\\.[0-9]+$/"
+    }
+  ]
+}

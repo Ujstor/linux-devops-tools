@@ -1,0 +1,46 @@
+# devops-env-config :: Keycloak OIDC credential template. PLACEHOLDERS ONLY.
+#
+# `sso-kubeconfig-add` renders this from ~/.config/devops-env/sso.env and applies it
+# with `kubectl config set-credentials`. It is shipped so the stanza can be reviewed
+# before you say yes, or pasted by hand on a box without the helper.
+#
+# ${VAR} below are the keys from sso.env; nothing here is a real value.
+users:
+  - name: ${OIDC_USER_NAME}                       # e.g. oidc
+    user:
+      exec:
+        # v1 (not v1beta1): interactiveMode is REQUIRED at v1, and being
+        # explicit is what makes every context behave identically.
+        apiVersion: client.authentication.k8s.io/v1
+        command: kubectl                          # not an absolute path, so the
+                                                  # same file works on WSL and the VM
+        interactiveMode: IfAvailable              # Never => no stdin => the OOB
+                                                  # paste-back flow cannot work
+        provideClusterInfo: false
+        installHint: "kubectl krew install oidc-login"
+        args:
+          - oidc-login
+          - get-token
+          - --oidc-issuer-url=${OIDC_ISSUER_URL}  # https://sso.example.com/realms/REALM_PLACEHOLDER
+          - --oidc-client-id=${OIDC_CLIENT_ID}    # public client + PKCE; NO client secret here
+          - --oidc-extra-scope=profile
+          - --oidc-extra-scope=email
+          - --oidc-extra-scope=${OIDC_GROUPS_SCOPE}
+          # Pinned so the redirect URL is deterministically http://localhost:8000
+          # (the default would drift to 18000 when 8000 is taken, and the redirect
+          #  URL is part of the token-cache key).
+          - --listen-address=127.0.0.1:${OIDC_LISTEN_PORT}
+          - --authentication-timeout-sec=600
+          # Headless host with no possible ssh -L tunnel: uncomment BOTH, and
+          # delete the --listen-address line above. `sso-kubeconfig-add --headless`
+          # does exactly this.
+          # - --grant-type=authcode-keyboard
+          # - --oidc-redirect-url=urn:ietf:wg:oauth:2.0:oob
+          # Self-signed IdP CA (tilde IS expanded for this flag):
+          # - --certificate-authority=~/.kube/idp-ca.pem
+          # Host without the xdg-open shim:
+          # - --browser-command=open-url
+          #
+          # NOT a flag: --oidc-use-pkce. It was removed upstream; the current one is
+          # --oidc-pkce-method (auto|no|S256), default auto. `devenv doctor` fails on
+          # a kubeconfig that still carries the old name.
