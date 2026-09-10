@@ -1,0 +1,29 @@
+# profiles/devops.list — THE DEFAULT PROFILE.
+#
+# minimal + languages + containers + kubernetes + k9s + auth/SSO + IaC + cloud
+# CLIs + editors + doctor. Terminal-only by design: no desktop environment, no
+# compositor and no GUI browser is installed by any of these.
+#
+# Web logins (Keycloak OIDC, Azure, GitHub, GitLab, Argo CD, OpenBao) are handled
+# by `auth-sso`, which installs a URL-opening shim rather than a browser.
+
+preflight                 # 00 — os support, bootstrap packages, XDG dirs
+base-packages             # 05 — the one apt base list
+shell                     # 10 — ~/.bashrc hook, ~/.bashrc.d, prompt, completions
+git                       # 15 — git config (set-if-absent), gh, delta
+lang-go                   # 20 — Go toolchain + the pinned go tools
+lang-rust                 # 21 — rustup
+lang-node                 # 22 — nvm + node
+lang-python               # 23 — uv and the Python CLIs
+containers                # 30 — docker-ce from the vendor repo
+kubernetes                # 35 — kubectl, helm, k9s, k3d, kind, argocd, trivy, …
+k8s-plugins               # 36 — krew, the kubectl plugin roster, helm plugins
+k9s-config                # 37 — k9s plugins, hotkeys, aliases and skins
+auth-sso                  # 38 — open-url/clip shims, SSO helpers and templates
+iac                       # 40 — terraform, tflint, terraform-docs, OpenBao
+cloud                     # 45 — gh, glab, azure-cli, hcloud, crane
+editors                   # 50 — neovim, tmux, the external config repos
+ai                        # 6x — Claude Code (base install, native installer)
+wsl                       # 70 — no-op unless this really is WSL
+doctor                    # 90 — audit the result
+summary                   # 99 — what changed and what to do next

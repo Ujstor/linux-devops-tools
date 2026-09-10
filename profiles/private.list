@@ -1,0 +1,10 @@
+# profiles/private.list — internal tooling from a private GitLab.
+#
+# Nothing in this repository names that host. The module reads it from the
+# environment (see $DEVENV_CONFIG/private.env, seeded from private.env.example and
+# gitignored) and silently skips when the variable is unset or the host is
+# unreachable. Run it on its own:
+#
+#     devenv --profile private
+
+private                   # 80

@@ -1,0 +1,8 @@
+# profiles/personal.list — the owner's own odds and ends.
+#
+# Nothing here is needed to work on this estate; it is kept out of every other
+# profile on purpose. Run it on its own:
+#
+#     devenv --profile personal
+
+personal                  # 85

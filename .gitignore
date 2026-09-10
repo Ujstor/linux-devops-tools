@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# devops-env-config — .gitignore
+#
+# This repository is PUBLIC. The rules below are a safety net, not the policy:
+# the policy is that nothing private is ever written into a tracked file in the
+# first place, and the CI privacy gate checks that structurally. Treat anything
+# matched here as a file that must never have existed inside the checkout.
+# ---------------------------------------------------------------------------
+
+# Per-host settings the modules seed once and never overwrite. Their *.example
+# twins ARE tracked, and contain placeholders only.
+sso.env
+private.env
+.env
+.envrc.local
+
+# Credentials and key material of every shape. None of these belongs here.
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.kubeconfig
+kubeconfig
+kubeconfig.*
+*-token
+.netrc
+.vault-token
+
+# Runtime state install.sh and `devenv update` leave inside the checkout.
+.tarball-install
+.devenv-bootstrap.*
+.devenv-update.*
+
+# Backups and rejects from patching, merging and hand-editing.
+*.bak
+*.orig
+*.rej
+*.new
+*~
+.#*
+\#*#
+
+# Test and tooling scratch.
+.cache/
+.tmp/
+tmp/
+*.log
+result/
+coverage/
+
+# Editors and operating systems.
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.direnv/
+
+# Python and Node, for the linters and helper scripts only. This repository
+# ships neither a package nor a virtualenv.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
