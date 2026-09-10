@@ -96,7 +96,10 @@ cannot get — exits `78`, is recorded as a **SKIP**, and the run continues. The
 | `secret-file` | a file that must never be committed at all: `sso.env`, `private.env`, a kubeconfig, a vault token, an SSH private key |
 
 Both linters are self-testing: `--self-test` plants synthetic violations and asserts every rule
-still fires. A line ending in `# policy-allow: <rule>` is exempt from that one rule — for a
+still fires, and both refuse to report `clean` when they collected no file to look at — a gate
+that scanned nothing exits 0 exactly like a gate that scanned everything, so the run also prints
+what it actually read (`28 module(s), 12 lib(s), 3 executable(s)`, `scanning 131 file(s)`) above
+its verdict. A line ending in `# policy-allow: <rule>` is exempt from that one rule — for a
 genuine, commented exception, never to silence a class.
 
 ## How idempotence is proven

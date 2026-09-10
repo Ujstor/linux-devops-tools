@@ -48,7 +48,14 @@ collect_files() {
   FILES=()
   ALL_FILES=()
   local -a names=()
-  if [ -d "$root/.git" ] && command -v git >/dev/null 2>&1; then
+  # `git rev-parse`, NOT `[ -d .git ]`. In a `git worktree` checkout .git is a
+  # FILE, so the -d test is false and this silently drops into the find fallback
+  # — a different enumerator, over a different set of files (it does not honour
+  # .gitignore), in the branch nobody ever runs. Two implementations of "which
+  # files count", one of them untested, is the shape that let the old-name rule
+  # scan a tree it could not see. Ask git whether this is a work tree instead.
+  if command -v git >/dev/null 2>&1 \
+    && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     mapfile -t names < <(git -C "$root" ls-files --cached --others --exclude-standard)
   else
     mapfile -t names < <(cd "$root" && find . -type f -printf '%P\n' | sort)
@@ -217,6 +224,25 @@ rule_secret_file() {
   return 0
 }
 
+# scan_tree ROOT — collect the files, refuse an empty collection, run every rule.
+#
+# The refusal is the point. "scanning 0 file(s)" followed by "clean" is a gate
+# that cleared this repository for publication without opening a single file,
+# and it exits 0 exactly like a real pass. Factored out of main() so the
+# self-test can aim it at an empty tree and prove it still refuses.
+scan_tree() {
+  local root=$1
+  collect_files "$root"
+  printf '%s: scanning %d file(s) under %s\n' "$PROG" "${#FILES[@]}" "$root"
+  if [ "${#FILES[@]}" -eq 0 ]; then
+    printf '%s: not one file was collected, so not one rule read anything.\n' "$PROG" >&2
+    printf 'This is a public repository and the gate has not cleared it. Refusing to pass.\n' >&2
+    return 1
+  fi
+  run_rules
+  return 0
+}
+
 run_rules() {
   rule_internal_host
   rule_private_ip
@@ -322,6 +348,17 @@ EOF
     rc=1
   fi
 
+  # And a tree with nothing in it must FAIL. A privacy gate that reports clean
+  # having opened no file is the failure this whole exercise is about, and it is
+  # indistinguishable from a real pass by exit status alone.
+  mkdir -p "$dir/empty"
+  if (scan_tree "$dir/empty") >/dev/null 2>&1; then
+    printf '  FAIL  scanning an empty tree reported success\n'
+    rc=1
+  else
+    printf '  ok    scanning nothing fails instead of passing\n'
+  fi
+
   [ "$rc" -eq 0 ] && printf '%s: self-test passed\n' "$PROG"
   return "$rc"
 }
@@ -348,9 +385,7 @@ main() {
   esac
 
   ROOT=$(repo_root)
-  collect_files "$ROOT"
-  printf '%s: scanning %d file(s) under %s\n' "$PROG" "${#FILES[@]}" "$ROOT"
-  run_rules
+  scan_tree "$ROOT" || return 1
 
   if [ "$FOUND_TOTAL" -gt 0 ]; then
     printf '\n%s: %d finding(s) in rules:%s\n' "$PROG" "$FOUND_TOTAL" "$FOUND_RULES" >&2

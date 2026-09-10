@@ -59,14 +59,33 @@ SHFMT_FLAGS ?= -i 2 -ci -bn
 # directive from the repository root.
 SHELLCHECK_FLAGS ?= -x -P . -S style
 
-.PHONY: help lint fmt fmt-check syntax lint-policy lint-privacy lint-k9s lint-docs \
-        test test-unit test-docker check bump bump-write clean
+# --- a gate that is not in the checkout is a FAILURE, never a skip ----------
+#
+# Every gate below used to be wrapped in
+#
+#     if [ -f <script> ]; then bash <script>; else printf 'skip: ...'; fi
+#
+# which was written while the tree was still being filled in, and outlived its
+# reason. It is the worst kind of check: rename, move or mistype a gate and the
+# target prints one line and exits 0 — here AND in CI, which runs exactly these
+# targets. Same shape as a rule that greps zero files and reports "clean".
+#
+# `make lint-policy` on a checkout with no tests/ directory now stops, loudly.
+gate = @test -f '$(1)' || { \
+         printf 'MISSING GATE: %s is not in this checkout.\n' '$(1)' >&2; \
+         printf 'A gate that is not here has not passed. Restore it, or delete the target that runs it.\n' >&2; \
+         exit 1; \
+       }
+
+.PHONY: help lint lint-coverage fmt fmt-check syntax lint-policy lint-privacy \
+        lint-k9s lint-docs lint-yaml test test-unit test-bootstrap test-docker \
+        check bump bump-write clean
 
 help: ## Show this help
 	@printf 'devops-env-config — make targets\n\n'
 	@grep -hE '^[a-z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) \
 	  | sort \
-	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 	@printf '\nContainers used: %s, %s\n' '$(SHELLCHECK_IMAGE)' '$(SHFMT_IMAGE)'
 
 # --- linting ---------------------------------------------------------------
@@ -78,6 +97,15 @@ syntax: ## Parse every script with `bash -n` (fast, no tools needed)
 lint: ## shellcheck every script (container by default)
 	$(SHELLCHECK) $(SHELLCHECK_FLAGS) $(SH_FILES)
 
+# SH_FILES is built from $(wildcard), which yields NOTHING for a directory that
+# does not match instead of complaining. Rename modules/ and `make lint` still
+# exits 0, having linted a shorter list — the quiet half of the same failure that
+# let `git grep` scan a tree of untracked files and report "clean". This target
+# is the tripwire: every shell file git knows about must be on the list.
+lint-coverage: ## Fail if a shell file in the checkout is on nobody's lint list
+	$(call gate,tests/policy/lint-coverage.sh)
+	@bash tests/policy/lint-coverage.sh $(SH_FILES)
+
 fmt: ## Reformat every script in place with shfmt
 	$(SHFMT) -w $(SHFMT_FLAGS) $(SH_FILES)
 
@@ -85,47 +113,49 @@ fmt-check: ## Fail if any script is not shfmt-clean
 	$(SHFMT) -d $(SHFMT_FLAGS) $(SH_FILES)
 
 lint-policy: ## The rules shellcheck cannot express (tests/policy/rules.sh)
-	@if [ -f tests/policy/rules.sh ]; then \
-	  bash tests/policy/rules.sh; \
-	else \
-	  printf 'skip: tests/policy/rules.sh is not in this checkout\n'; \
-	fi
+	$(call gate,tests/policy/rules.sh)
+	@bash tests/policy/rules.sh
 
 lint-privacy: ## The public-repo gate: no private host, IP, realm or kubeconfig
-	@if [ -f tests/policy/privacy.sh ]; then \
-	  bash tests/policy/privacy.sh; \
-	else \
-	  printf 'skip: tests/policy/privacy.sh is not in this checkout\n'; \
-	fi
+	$(call gate,tests/policy/privacy.sh)
+	@bash tests/policy/privacy.sh
 
 lint-k9s: ## Check the shipped k9s key map and plugin safety rules
-	@if [ -f tests/k9s-keys.sh ]; then \
-	  bash tests/k9s-keys.sh; \
-	else \
-	  printf 'skip: tests/k9s-keys.sh is not in this checkout\n'; \
-	fi
+	$(call gate,tests/k9s-keys.sh)
+	@bash tests/k9s-keys.sh
 
 lint-docs: ## Check docs/modules.md still matches the module meta headers
+	$(call gate,tests/policy/docs-drift.sh)
 	@bash tests/policy/docs-drift.sh
+
+lint-yaml: ## Parse every shipped YAML file (k9s plugins, skins, the workflow)
+	$(call gate,tests/policy/yaml-parse.sh)
+	@bash tests/policy/yaml-parse.sh
 
 # --- tests -----------------------------------------------------------------
 
 test-unit: ## Run the unit tests (no network, no root)
-	@if [ -f tests/unit/run.sh ]; then \
-	  bash tests/unit/run.sh; \
-	else \
-	  printf 'skip: tests/unit/run.sh is not in this checkout\n'; \
-	fi
+	$(call gate,tests/unit/run.sh)
+	@bash tests/unit/run.sh
+
+test-bootstrap: ## `curl | bash` still survives: no tty, no BASH_SOURCE
+	$(call gate,tests/bootstrap.sh)
+	@bash tests/bootstrap.sh
 
 test-docker: ## The container matrix: install twice, assert nothing changed
-	@if [ -f tests/docker/matrix.sh ]; then \
-	  bash tests/docker/matrix.sh; \
-	else \
-	  printf 'skip: tests/docker/matrix.sh is not in this checkout\n'; \
-	fi
+	$(call gate,tests/docker/matrix.sh)
+	@bash tests/docker/matrix.sh
 
-check: syntax lint fmt-check ## Everything that runs in under a minute
-test: check lint-policy lint-privacy lint-k9s lint-docs test-unit test-docker ## Everything
+# `check` is what CI's lint job runs, so lint-coverage belongs in it: a wildcard
+# that stopped matching is caught in the same second as a syntax error.
+check: lint-coverage syntax lint fmt-check ## Everything that runs in under a minute
+
+# `test` is the whole of CI, minus the container matrix's sibling jobs that are
+# already covered by test-docker. Every CI job below maps to exactly one target
+# here — see docs/development.md for the job-by-job table.
+# One line on purpose: the `help` target greps `^target:.*## `, so a target whose
+# doc comment sits on a continuation line silently vanishes from `make help`.
+test: check lint-policy lint-privacy lint-k9s lint-docs lint-yaml test-unit test-bootstrap test-docker ## Everything
 
 # --- maintenance -----------------------------------------------------------
 

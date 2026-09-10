@@ -148,7 +148,17 @@ assert_symlink() {
 t_section() { printf '  -- %s\n' "$*"; }
 
 # t_summary — the last line of every test file. Exit status decides the result.
+#
+# Zero failures is NOT the whole condition. A test file whose assertions were
+# commented out, or that returned early before reaching them, also reports zero
+# failures, and `0 passed, 0 failed` would otherwise be a pass. An assertion
+# count of zero means the file measured nothing.
 t_summary() {
   printf '  %s: %d passed, %d failed\n' "$T_NAME" "$T_PASS" "$T_FAIL"
+  if [ "$T_PASS" -eq 0 ] && [ "$T_FAIL" -eq 0 ]; then
+    printf '  %s: made no assertion at all — a test that cannot fail is not a test\n' \
+      "$T_NAME" >&2
+    return 1
+  fi
   [ "$T_FAIL" -eq 0 ]
 }

@@ -56,9 +56,14 @@ main() {
     done
   fi
 
+  # A run that found no test file has not proved anything, so it must not
+  # report success. `make test-unit` and CI both read this exit status, and
+  # "no unit tests found" followed by 0 is indistinguishable from a green suite
+  # — the same shape as a policy rule that greps a tree it cannot see.
   if [ ${#files[@]} -eq 0 ]; then
-    printf 'no unit tests found in %s\n' "$UNIT"
-    return 0
+    printf 'no unit test was found in %s\n' "$UNIT" >&2
+    printf 'That is a broken checkout, not a passing suite. Refusing to report success.\n' >&2
+    return 1
   fi
 
   local f

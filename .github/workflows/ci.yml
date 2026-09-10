@@ -7,11 +7,25 @@ name: ci
 #              second run must change nothing
 #   policy     the rules shellcheck cannot express (one mutation gate, one apt
 #              policy, no pin outside versions.env)
-#   lint       shellcheck and shfmt
+#   lint       shellcheck and shfmt, plus the file list they are handed
+#   yaml       every shipped YAML file parses
+#   docs       docs/modules.md still matches the module meta headers
 #   unit       the library's own behaviour, with no network and no root
+#   bootstrap  `curl | bash` survives with no tty and no BASH_SOURCE
 #
-# Everything here is also a make target, so anything CI catches can be reproduced
-# locally with one command. There is no CI-only magic.
+# EVERY JOB IS A MAKE TARGET, and that is a rule rather than a coincidence: a
+# check only CI can run is a check nobody runs before pushing, which is how nine
+# violations got past a local suite that reported clean. The `container` matrix is
+# the one exception — it calls `docker run` per image for log separation, with
+# exactly the environment tests/docker/matrix.sh passes, so `make test-docker`
+# reproduces it image for image.
+#
+# Every job below reports through `ci-ok`, and every step that runs a `make`
+# target ASSERTS THE TARGET'S OWN VERDICT LINE rather than trusting exit 0. The
+# Makefile no longer prints "skip: ..." for a missing gate — it stops with
+# MISSING GATE — but exit 0 still is not evidence that a check ran: a scanner
+# that scanned nothing prints the same "clean" as one that scanned everything.
+# The verdict line, with its non-zero counts, is what tells those apart.
 
 on:
   push:
@@ -43,8 +57,16 @@ jobs:
           shellcheck --version || true
           docker --version || true
 
-      # `make check` is syntax + shellcheck + shfmt --diff. shfmt comes from a
-      # container when it is not on PATH, which is the case on the runner.
+      # SH_FILES is built from $(wildcard …), so a directory that stops matching
+      # silently shortens the list and `make lint` still exits 0 having linted
+      # less. `make check` runs lint-coverage first for that reason; this step
+      # proves the coverage gate itself can still fail.
+      - name: The lint list still covers the tree
+        run: bash tests/policy/lint-coverage.sh --self-test
+
+      # `make check` is lint-coverage + syntax + shellcheck + shfmt --diff. shfmt
+      # comes from a container when it is not on PATH, which is the case on the
+      # runner.
       - name: make check
         run: make check
 
@@ -60,8 +82,14 @@ jobs:
       - name: The rules still fire
         run: bash tests/policy/rules.sh --self-test
 
+      # `make lint-policy` prints "skip: ..." and exits 0 when rules.sh is not in
+      # the checkout, so a deleted or renamed gate reads exactly like a clean
+      # tree. Assert the target reached its own verdict instead of trusting 0.
       - name: make lint-policy
-        run: make lint-policy
+        run: |
+          set -euo pipefail
+          make lint-policy | tee /tmp/policy.log
+          grep -qx 'rules.sh: clean' /tmp/policy.log
 
   privacy:
     name: public-repo gate
@@ -79,11 +107,27 @@ jobs:
       - name: Every privacy rule still fires
         run: bash tests/policy/privacy.sh --self-test
 
+      # The count in "scanning N file(s)" is the load-bearing part of the output:
+      # a gate that scanned NOTHING prints the same "clean" as a gate that
+      # scanned everything, which is how the old-name rule passed locally for the
+      # whole life of this branch. N must be non-zero and the verdict must be
+      # there — `make lint-privacy` also prints "skip:" and exits 0 when the
+      # script is missing.
       - name: make lint-privacy
-        run: make lint-privacy
+        run: |
+          set -euo pipefail
+          make lint-privacy | tee /tmp/privacy.log
+          grep -qE '^privacy\.sh: scanning [1-9][0-9]* file\(s\) under ' /tmp/privacy.log
+          grep -qx 'privacy.sh: clean' /tmp/privacy.log
 
+      # `--rule` rejects an unknown name with status 64, so this step cannot
+      # quietly become a no-op if the rule is ever renamed. The verdict line
+      # names the rule that actually ran.
       - name: The old repository name is gone from every URL
-        run: bash tests/policy/rules.sh --rule old-name
+        run: |
+          set -euo pipefail
+          bash tests/policy/rules.sh --rule old-name | tee /tmp/oldname.log
+          grep -qx 'rules.sh: clean (old-name)' /tmp/oldname.log
 
   yaml:
     name: yaml
@@ -101,37 +145,49 @@ jobs:
 
       # Every shipped YAML file must parse. A k9s plugin file that does not is a
       # k9s that refuses to start at all — its decoder rejects the whole file.
-      - name: Parse every YAML file in the checkout
+      #
+      # This walk used to live inline here, which made it the one gate nobody
+      # could run before pushing. It is tests/policy/yaml-parse.sh now, reachable
+      # as `make lint-yaml`, and it proves itself against a file that does not
+      # parse before it judges the checkout — including the tripwire that a walk
+      # matching zero files is a failure and not a clean tree.
+      - name: The YAML gate still fires
+        run: bash tests/policy/yaml-parse.sh --self-test
+
+      - name: make lint-yaml
         run: |
-          python3 - <<'PY'
-          import pathlib
-          import sys
+          set -euo pipefail
+          make lint-yaml | tee /tmp/yaml.log
+          grep -qE '^[1-9][0-9]* YAML file\(s\) parsed, 0 invalid$' /tmp/yaml.log
+          grep -qx 'yaml-parse.sh: clean' /tmp/yaml.log
 
-          import yaml
-
-          root = pathlib.Path('.')
-          skip = {'.git', 'node_modules', '.cache'}
-          failed = []
-          checked = 0
-          for path in sorted(root.rglob('*')):
-              if not path.is_file() or path.suffix not in ('.yaml', '.yml'):
-                  continue
-              if any(part in skip for part in path.parts):
-                  continue
-              try:
-                  list(yaml.safe_load_all(path.read_text(encoding='utf-8')))
-                  checked += 1
-              except Exception as exc:                      # noqa: BLE001
-                  failed.append((path, exc))
-
-          for path, exc in failed:
-              print(f'INVALID {path}: {exc}', file=sys.stderr)
-          print(f'{checked} YAML file(s) parsed, {len(failed)} invalid')
-          sys.exit(1 if failed else 0)
-          PY
+      # `make lint-k9s` prints "skip: ..." and exits 0 when the script is not in
+      # the checkout. Assert the file is here, then assert the run reached its
+      # own verdict.
+      - name: The k9s gate is present
+        run: test -f tests/k9s-keys.sh
 
       - name: make lint-k9s
-        run: make lint-k9s
+        run: |
+          set -euo pipefail
+          make lint-k9s | tee /tmp/k9s.log
+          grep -qx 'k9s key map is clean.' /tmp/k9s.log
+
+  docs:
+    name: docs match the modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # docs/modules.md is written by hand, so it rots. `make test` has always
+      # run this check and CI never did: the one gate that catches a stale table
+      # was the one gate nobody ran.
+      - name: make lint-docs
+        run: |
+          set -euo pipefail
+          make lint-docs | tee /tmp/docs.log
+          grep -qE '^docs-drift\.sh: clean \([1-9][0-9]* module\(s\), [1-9][0-9]* table row\(s\)\)$' /tmp/docs.log
 
   unit:
     name: unit tests
@@ -140,8 +196,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Two ways this target goes green without running a test: the Makefile
+      # prints "skip:" when tests/unit/run.sh is missing, and run.sh itself
+      # prints "no unit tests found" and returns 0 when the test_*.sh glob is
+      # empty. The summary line, with a non-zero count, is the real assertion.
       - name: make test-unit
-        run: make test-unit
+        run: |
+          set -euo pipefail
+          make test-unit | tee /tmp/unit.log
+          grep -qE '^unit tests: [1-9][0-9]* file\(s\) passed, 0 failed$' /tmp/unit.log
 
   bootstrap:
     name: curl | bash survives
@@ -152,14 +215,21 @@ jobs:
 
       # MUST-FIX S1: under `bash -s` the BASH_SOURCE array is EMPTY, so an
       # unguarded ${BASH_SOURCE[0]} under `set -u` is fatal before the script
-      # prints a single line. This is the shape a real user runs.
-      - name: cat install.sh | bash -s -- --help
-        run: cat install.sh | bash -s -- --help
-
-      # The same thing with no controlling terminal at all, which is how it runs
-      # from cloud-init, a Dockerfile or a provisioning pipeline.
-      - name: The same with no tty
-        run: setsid bash -c 'cat install.sh | bash -s -- --help' </dev/null
+      # prints a single line. This is the shape a real user runs, and the second
+      # case — no controlling terminal — is how it runs from cloud-init, a
+      # Dockerfile or a provisioning pipeline.
+      #
+      # Both commands were inline here, which is why this job had no local
+      # equivalent. tests/bootstrap.sh runs them, plus a piped stdout and the
+      # plain file invocation, and every case asserts on the HELP TEXT and not
+      # only on the exit status: `bash -s -- --help` printing nothing and exiting
+      # 0 is exactly the failure this job exists to catch, and a status-only
+      # assertion would call it a pass.
+      - name: make test-bootstrap
+        run: |
+          set -euo pipefail
+          make test-bootstrap | tee /tmp/bootstrap.log
+          grep -qE '^bootstrap\.sh: [1-9][0-9]* passed, 0 failed$' /tmp/bootstrap.log
 
   container:
     name: ${{ matrix.image }}
@@ -194,33 +264,96 @@ jobs:
             bash /src/tests/docker/entry.sh
 
   # A single required check to point branch protection at, so adding a job later
-  # does not mean editing the protection rules.
+  # does not mean editing the protection rules. Two things have to be true for
+  # that to mean anything, and both are asserted below rather than assumed:
+  #
+  #   1. every job in this workflow is actually in `needs` — a job that is not
+  #      listed is a job nobody is gating, and `ci` stays green while it burns
+  #   2. every needed job ended in `success` — and nothing else. The previous
+  #      version accepted `skipped` as a pass, which is the same shape as a rule
+  #      that scans no files: green because nothing happened.
+  #
+  # `container` legs marked `soft: true` carry job-level continue-on-error, so a
+  # failure there is reported to `needs` as success. That is the one intended
+  # exemption and it lives at the matrix entry, where it is visible.
   ci-ok:
     name: ci
     runs-on: ubuntu-latest
-    needs: [lint, policy, privacy, yaml, unit, bootstrap, container]
+    needs: [lint, policy, privacy, yaml, docs, unit, bootstrap, container]
     if: always()
     steps:
-      - name: Fail if anything above failed
+      - uses: actions/checkout@v4
+
+      - name: Every job in this workflow is gated by this one
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          printf 'lint=%s policy=%s privacy=%s yaml=%s unit=%s bootstrap=%s container=%s\n' \
-            '${{ needs.lint.result }}' \
-            '${{ needs.policy.result }}' \
-            '${{ needs.privacy.result }}' \
-            '${{ needs.yaml.result }}' \
-            '${{ needs.unit.result }}' \
-            '${{ needs.bootstrap.result }}' \
-            '${{ needs.container.result }}'
-          for r in \
-            '${{ needs.lint.result }}' \
-            '${{ needs.policy.result }}' \
-            '${{ needs.privacy.result }}' \
-            '${{ needs.yaml.result }}' \
-            '${{ needs.unit.result }}' \
-            '${{ needs.bootstrap.result }}' \
-            '${{ needs.container.result }}'; do
-            case "$r" in
-              success | skipped) ;;
-              *) exit 1 ;;
-            esac
-          done
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import sys
+
+          SELF = 'ci-ok'
+          wf = pathlib.Path('.github/workflows/ci.yml')
+          needed = json.loads(os.environ['NEEDS'])
+
+          jobs, in_jobs = [], False
+          for line in wf.read_text(encoding='utf-8').splitlines():
+              if not in_jobs:
+                  in_jobs = re.fullmatch(r'jobs:\s*', line) is not None
+                  continue
+              if line.strip() and not line[:1].isspace():
+                  break                      # a new top-level key ends jobs:
+              m = re.fullmatch(r'  ([A-Za-z_][A-Za-z0-9_-]*):\s*', line)
+              if m:
+                  jobs.append(m.group(1))
+
+          # The parser is the thing that could silently return nothing and make
+          # this whole step a no-op, so it has to prove it found the workflow.
+          if len(jobs) < 2 or SELF not in jobs:
+              sys.exit(f'could not read the job list out of {wf}: {jobs}')
+          if not needed:
+              sys.exit('the needs context is empty — this gate would pass on anything')
+
+          print('jobs in the workflow:', ' '.join(jobs))
+          print('jobs in needs:       ', ' '.join(sorted(needed)))
+
+          ungated = [j for j in jobs if j != SELF and j not in needed]
+          unknown = [j for j in needed if j not in jobs]
+          if ungated:
+              print(f'NOT GATED: {" ".join(ungated)} — add them to `needs` of {SELF}',
+                    file=sys.stderr)
+          if unknown:
+              print(f'STALE: {" ".join(unknown)} is in `needs` but is not a job here',
+                    file=sys.stderr)
+          sys.exit(1 if ungated or unknown else 0)
+          PY
+
+      - name: Fail unless every needed job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needed = json.loads(os.environ['NEEDS'])
+          if not needed:
+              sys.exit('the needs context is empty — refusing to report success')
+
+          for job in sorted(needed):
+              print(f'{job:<12} {needed[job].get("result")}')
+
+          # `success` and nothing else. cancelled, failure and skipped all mean
+          # the job did not prove what it exists to prove.
+          bad = {j: v.get('result') for j, v in needed.items()
+                 if v.get('result') != 'success'}
+          if bad:
+              sys.exit('did not succeed: '
+                       + ', '.join(f'{j}={r}' for j, r in sorted(bad.items())))
+          PY

@@ -15,16 +15,21 @@ make help
 
 | target | what it runs | needs |
 |---|---|---|
+| `make lint-coverage` | every shell file in the checkout is on the lint list | git |
 | `make syntax` | `bash -n` over every shipped script | nothing |
 | `make lint` | `shellcheck -x -P . -S style` | shellcheck, or Docker |
 | `make fmt` / `make fmt-check` | `shfmt -i 2 -ci -bn`, write / diff | shfmt, or Docker |
-| **`make check`** | `syntax lint fmt-check` — **under a minute** | |
+| **`make check`** | `lint-coverage syntax lint fmt-check` — **under a minute** | |
 | `make lint-policy` | `tests/policy/rules.sh` | nothing |
 | `make lint-privacy` | `tests/policy/privacy.sh` — the public-repo gate | nothing |
 | `make lint-k9s` | `tests/k9s-keys.sh` — shipped key map and plugin safety | nothing |
+| `make lint-docs` | `tests/policy/docs-drift.sh` — [modules.md](modules.md) vs the meta headers | nothing |
+| `make lint-yaml` | `tests/policy/yaml-parse.sh` — every shipped YAML file parses | python3 + PyYAML |
 | `make test-unit` | `tests/unit/run.sh` — no network, no root | nothing |
+| `make test-bootstrap` | `tests/bootstrap.sh` — `curl \| bash` with no tty, no `BASH_SOURCE` | nothing |
 | `make test-docker` | the container matrix: install twice, assert nothing changed | Docker + network |
 | **`make test`** | all of the above | |
+| `make bump` / `make bump-write` | `tools/bump-versions.sh` — pins with a newer upstream | network |
 | `make clean` | remove bootstrap scratch from an interrupted install | |
 
 `shellcheck` and `shfmt` come from containers when they are not on your `PATH`, so there is
@@ -40,10 +45,46 @@ PROFILE=ci bash tests/docker/matrix.sh              # a deeper, slower run
 `~/.local/bin` and `config/bashrc.d/*` are sourced into every interactive shell. They are the
 files that run most often, so a lint gate that skipped them would be the wrong gate.
 
-> [!NOTE]
-> `make bump` and `make docs` reference `tools/bump-versions.sh` and `tools/gen-module-docs.sh`,
-> which are not in this checkout — both targets print a skip. Until they land, `versions.env` is
-> bumped by hand and [docs/modules.md](modules.md) is maintained by hand.
+> [!IMPORTANT]
+> **No gate skips itself.** Every target above stops with `MISSING GATE: …` when the script it
+> runs is not in the checkout, instead of printing `skip:` and exiting 0. A gate that is not
+> there has not passed, and a green target that ran nothing is worse than no target — that is
+> the same failure as a rule that greps a tree it cannot see. The same rule holds inside the
+> gates: `rules.sh` refuses to run when its globs match no file, `privacy.sh` refuses when it
+> collected no file, `yaml-parse.sh` refuses when it found no YAML, `run.sh` refuses when there
+> is no test file, and a test file that makes no assertion fails.
+
+There is no `make docs`: [docs/modules.md](modules.md) is written by hand, because its
+"what it does" column is prose no `# meta: desc=` one-liner could carry. `make lint-docs`
+keeps the machine-checkable half of it honest instead.
+
+## CI, job by job
+
+Every CI job is one `make` target, so anything CI catches can be reproduced with one command
+before pushing. Each gate also proves itself against planted violations before it judges the
+checkout, and each CI step asserts on the gate's **verdict line**, not only on its exit status.
+
+| CI job | steps | run it locally |
+|---|---|---|
+| `shellcheck + shfmt` | `lint-coverage.sh --self-test`, `make check` | `make check` |
+| `policy rules` | `rules.sh --self-test`, `make lint-policy` | `make lint-policy` |
+| `public-repo gate` | `privacy.sh --self-test`, `make lint-privacy`, `rules.sh --rule old-name` | `make lint-privacy` |
+| `yaml` | `yaml-parse.sh --self-test`, `make lint-yaml`, `make lint-k9s` | `make lint-yaml lint-k9s` |
+| `docs match the modules` | `make lint-docs` | `make lint-docs` |
+| `unit tests` | `make test-unit` | `make test-unit` |
+| `curl \| bash survives` | `make test-bootstrap` | `make test-bootstrap` |
+| `debian:12` … `ubuntu:26.04` | `docker run … tests/docker/entry.sh`, one image per leg | `IMAGES=debian:12 make test-docker` |
+| `ci` | asserts every job is in its `needs`, and that every one of them **succeeded** | — |
+
+`make test` is all of it except the container matrix's per-image parallelism. The `container`
+legs are the one place CI calls `docker run` directly rather than through a target: it runs one
+image per job for the log separation, with exactly the environment `tests/docker/matrix.sh`
+passes (`SRC=/src`, `PROFILE=minimal`, `DRY_PROFILE=ci`, the checkout mounted read-only).
+
+> [!TIP]
+> `make test-docker` skips when Docker is not usable, because that is the right behaviour on a
+> laptop. Anywhere the result is read as a gate, set `REQUIRE_DOCKER=1` and the skip becomes a
+> failure.
 
 ## The linters
 
@@ -57,8 +98,11 @@ bash tests/policy/rules.sh --list         # what each rule checks
 bash tests/policy/rules.sh --self-test    # plant synthetic violations, assert every rule fires
 ```
 
-`privacy.sh` takes `--list` and `--self-test` (it has no `--rule`). Both linters are described
-rule by rule in [docs/safety.md](safety.md).
+`privacy.sh`, `yaml-parse.sh` and `lint-coverage.sh` take `--self-test` too. Every run of
+`rules.sh` and `privacy.sh` prints what it actually looked at — `28 module(s), 12 lib(s),
+3 executable(s)`, `scanning 131 file(s)` — before its verdict, because `clean` on its own does
+not distinguish a gate that found nothing wrong from a gate that read nothing at all. Both
+linters are described rule by rule in [docs/safety.md](safety.md).
 
 A line ending in `# policy-allow: <rule>` is exempt from that one rule. Use it for a genuine,
 commented exception — never to silence a class.

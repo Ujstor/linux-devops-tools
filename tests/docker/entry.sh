@@ -46,6 +46,13 @@ REPO=$HOME_DIR/repo
 
 FAILURES=0
 
+# Every PASS is counted, not just every FAIL. "0 failures" is also what a run
+# that checked NOTHING reports — an early `return` in one of the check functions,
+# a branch that skipped them all, an image where every probe was inconclusive —
+# and it exits 0 exactly like a real pass. CHECKS_MIN below is the floor.
+CHECKS=0
+CHECKS_MIN=${CHECKS_MIN:-10}
+
 # Byte order, not locale order: two fingerprints must sort identically.
 export LC_ALL=C
 
@@ -56,7 +63,10 @@ export LC_ALL=C
 say() { printf '\n=== %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 
-ok() { printf 'PASS  %s\n' "$*"; }
+ok() {
+  CHECKS=$((CHECKS + 1))
+  printf 'PASS  %s\n' "$*"
+}
 
 bad() {
   printf 'FAIL  %s\n' "$*" >&2
@@ -164,9 +174,52 @@ fingerprint() {
         | sort -z | xargs -0 -r sha256sum 2>/dev/null | sort -k2 || true
     done
   } >"$out"
+
+  fp_assert "$out"
+}
+
+# fp_assert FILE — a fingerprint of nothing is not a fingerprint.
+#
+# THIS IS THE OTHER HALF OF THE HEADER'S WARNING. Taking the first fingerprint
+# after the dry run compared a value with itself; so does taking two fingerprints
+# that are both EMPTY, and that one is invisible. Every stage above ends in
+# `2>/dev/null … || true` so one unreadable path cannot abort the run — which
+# also means a broken stage produces an empty section in total silence. Delete
+# the `-false` terminator from fp_prunes and `find` exits with "invalid
+# expression": ## metadata and ## content come out empty, in BOTH fingerprints,
+# and `--dry-run changed nothing` and `the second run changed nothing` both
+# report PASS having compared three header lines to three header lines. Measured,
+# not imagined — that edit is one token.
+#
+# So each section has to prove it collected something. The floor is deliberately
+# far below any real value (a stock debian:12 gives ~400 packages, ~40,000
+# metadata rows and ~2,000 hashes): this is a tripwire for zero, not a threshold.
+fp_assert() {
+  local out=$1 sec n broken=''
+  for sec in packages metadata content; do
+    n=$(awk -v want="## $sec" '
+      $0 == want { in_sec = 1; next }
+      /^## / { in_sec = 0 }
+      in_sec && NF { c++ }
+      END { print c + 0 }' "$out")
+    printf '    %-9s %s row(s)\n' "$sec" "$n"
+    [ "$n" -ge "${FP_MIN_ROWS:-10}" ] || broken="$broken $sec($n)"
+  done
+  [ -n "$broken" ] || return 0
+
+  bad "the fingerprint collected almost nothing:$broken"
+  printf '    A fingerprint with an empty section cannot detect a change, and two of\n' >&2
+  printf '    them diff clean — every filesystem check below would PASS having compared\n' >&2
+  printf '    nothing. Fix fp_prunes/fingerprint: a broken find expression is silent\n' >&2
+  printf '    here, its stderr goes to /dev/null and the trailing || true hides the\n' >&2
+  printf '    exit status.\n' >&2
+  exit 2
 }
 
 # compare BEFORE AFTER WHAT — a diff, with the first few offending lines shown.
+#
+# Both fingerprints have been through fp_assert by the time they arrive here, so
+# "identical" means "identical and non-empty".
 compare() {
   local a=$1 b=$2 what=$3
   if diff -q "$a" "$b" >/dev/null 2>&1; then
@@ -239,7 +292,15 @@ setup() {
 check_bootstrap_help() {
   say 'install.sh --help through a pipe (MUST-FIX S1)'
   if as_user "cat $REPO/install.sh | bash -s -- --help" >"$WORK/help.log" 2>&1; then
-    ok 'curl-pipe style "bash -s -- --help" exits 0'
+    # Exit 0 alone would also be satisfied by a bootstrapper that dies before it
+    # prints anything and happens to end on a zero status. What S1 is about is
+    # the help TEXT reaching the user, so assert the text.
+    if grep -q 'Bootstrap options (consumed here):' "$WORK/help.log"; then
+      ok 'curl-pipe style "bash -s -- --help" exits 0 and prints its help'
+    else
+      bad 'the piped --help exited 0 but printed no help text (see help.log)'
+      sed -n '1,20p' "$WORK/help.log" >&2
+    fi
   else
     bad 'install.sh could not run with an empty BASH_SOURCE (see help.log)'
     sed -n '1,20p' "$WORK/help.log" >&2
@@ -357,17 +418,27 @@ check_install_twice() {
 }
 
 # profile_has MODULE — true when the installed profile lists that module.
+#
+# A MISSING profile list is not "the profile does not list that module": it is a
+# broken checkout, and answering "no" to every question would turn the caller's
+# assertion into an info line. Say so and stop.
 profile_has() {
   local list="$REPO/profiles/$PROFILE.list"
-  [ -f "$list" ] || return 1
+  [ -f "$list" ] || {
+    bad "no such profile list: profiles/$PROFILE.list — the checkout is incomplete"
+    exit 2
+  }
   grep -qE "^[[:space:]]*$1([[:space:]]|#|\$)" "$list"
 }
 
 check_shell_integration() {
   say 'shell integration'
 
+  # `grep -c` prints 0 AND exits 1 when it matches nothing, so `|| printf '0'`
+  # appended a second zero and $blocks became the two-line string "0\n0".
+  # Counting the lines ourselves keeps it a number.
   local blocks
-  blocks=$(grep -c '^# >>> devops-env-config' "$HOME_DIR/.bashrc" 2>/dev/null || printf '0')
+  blocks=$(grep -c '^# >>> devops-env-config' "$HOME_DIR/.bashrc" 2>/dev/null) || blocks=0
   if [ "$blocks" = 1 ]; then
     ok 'exactly one managed block in ~/.bashrc'
   elif profile_has shell; then
@@ -383,7 +454,14 @@ check_shell_integration() {
     '. "$HOME/.bashrc"; printf "PATHDUMP:%s\n" "$PATH"' \
     </dev/null 2>/dev/null | sed -n 's/^PATHDUMP://p' | tail -n1)
   if [ -z "$path" ]; then
-    info 'could not read PATH from an interactive shell — skipping the duplicate check'
+    # This used to `info` and return 0, which made the WORST outcome the quiet
+    # one: an interactive shell that prints no PATH is a ~/.bashrc that died
+    # while being sourced — a `set -e` in a drop-in, an unbound variable, a
+    # syntax error — which is precisely what this check exists to catch. All 13
+    # recorded container runs read a PATH here, so an empty one is a finding.
+    bad 'no PATH came back from an interactive shell — ~/.bashrc did not survive being sourced'
+    sudo -u "$TEST_USER" -H bash -i -c '. "$HOME/.bashrc"' </dev/null 2>&1 \
+      | tail -n 20 | sed 's/^/      /' >&2
     return 0
   fi
   dups=$(printf '%s' "$path" | tr ':' '\n' | grep -v '^$' | sort | uniq -d || true)
@@ -397,27 +475,84 @@ check_shell_integration() {
 check_cli() {
   say 'the CLI still works on the installed box'
   local devenv="$REPO/bin/devenv"
+  local n
 
+  # EXIT 0 IS NOT THE ASSERTION HERE. `devenv list` that prints nothing and exits
+  # 0 is a registry that resolved no module — the failure this check is for — and
+  # a status-only test calls it a pass while cheerfully printing "0 module(s)".
   if as_user "$devenv list" >"$WORK/list.tsv" 2>/dev/null; then
-    ok "devenv list -> $(wc -l <"$WORK/list.tsv") module(s) on stdout"
+    n=$(grep -c . "$WORK/list.tsv") || n=0
+    if [ "$n" -gt 0 ]; then
+      ok "devenv list -> $n module(s) on stdout"
+    else
+      bad 'devenv list exited 0 but printed no module at all'
+    fi
   else
     bad 'devenv list failed'
   fi
 
   if as_user "$devenv version" >"$WORK/version.txt" 2>&1; then
-    ok 'devenv version'
+    if [ -s "$WORK/version.txt" ]; then
+      ok "devenv version -> $(head -n1 "$WORK/version.txt")"
+    else
+      bad 'devenv version exited 0 but printed nothing'
+    fi
   else
     bad 'devenv version failed'
   fi
 
-  # doctor reports; a WARN is not a test failure. Only a crash is.
+  # doctor reports; a WARN is not a test failure. A FAIL is.
+  #
+  # THIS CHECK HAD NO FAILING INPUT. `devenv doctor` exits 0 whatever it finds —
+  # modules/90-doctor.sh says so, and adds "Set DEVENV_DOCTOR_STRICT=1 to make
+  # any FAIL exit non-zero (that is the form to use in CI)". This is CI, and it
+  # was using the other form and then asserting `rc -le 1`: 0 is the only status
+  # doctor can return short of a crash, so the assertion was satisfied by every
+  # outcome, including a doctor that reported ten failures on the box the two
+  # install runs above had just built. Use the CI form, and read the count.
   local rc=0
-  as_user "$devenv doctor" >"$WORK/doctor.log" 2>&1 || rc=$?
-  if [ "$rc" -le 1 ]; then
-    ok "devenv doctor ran (exit $rc)"
-  else
-    bad "devenv doctor exited $rc (see doctor.log)"
+  as_user "DEVENV_DOCTOR_STRICT=1 $devenv doctor" >"$WORK/doctor.log" 2>&1 || rc=$?
+  local summary
+  summary=$(sed -n 's/.*checks: \([0-9]* ok, [0-9]* warning(s), [0-9]* failure(s)\).*/\1/p' \
+    "$WORK/doctor.log" | tail -n1)
+  if [ -z "$summary" ]; then
+    # No summary line means doctor did not reach its own end — the shape the
+    # old `rc -le 1` test would have called a pass.
+    bad "devenv doctor printed no summary line (exit $rc) — see doctor.log"
     tail -n 30 "$WORK/doctor.log" >&2
+    return 0
+  fi
+  info "doctor: $summary (strict)"
+
+  # KNOWN, AND ON PURPOSE VISIBLE. Turning the strict form on for the first time
+  # surfaced 12 failures that had been reported on every green run since this
+  # test was written: modules/90-doctor.sh check_sso `fail`s for each of the 12
+  # browser/clipboard shims whenever they are absent, but this box installs
+  # PROFILE=minimal, which does not include the auth-sso module that puts them
+  # there. That is a doctor severity bug — "this profile never installed it" is
+  # not the same as "it is broken" — and it belongs in 90-doctor.sh, not here.
+  #
+  # Until it is fixed, exactly that class is tolerated and NOTHING ELSE IS. The
+  # count is printed above on every run so it cannot rot quietly, and a 13th
+  # failure of any other kind fails this check.
+  # Counting, not grepping the error lines: under STRICT the module runner adds
+  # its own "failed (exit 1) at doctor:NNN" traces, which restate the one
+  # non-zero exit and are not findings. Doctor's own counter is the authority.
+  local shims='open-url|clip|clip-paste|sso-login|sso-kubeconfig-add|web'
+  shims="$shims|xdg-open|x-www-browser|www-browser|sensible-browser|pbcopy|pbpaste"
+  local fails shim_fails
+  fails=${summary#*warning(s), }
+  fails=${fails%% *}
+  shim_fails=$(grep -cE "missing or not executable: .*/($shims)\$" "$WORK/doctor.log") \
+    || shim_fails=0
+  if [ "$fails" -eq "$shim_fails" ]; then
+    ok "devenv doctor: $summary — all $shim_fails are auth-sso shims this profile omits"
+  else
+    bad "devenv doctor: $summary — $((fails - shim_fails)) failure(s) this profile does not explain"
+    grep -E '\[ xx \]' "$WORK/doctor.log" \
+      | grep -vE "missing or not executable: .*/($shims)\$" \
+      | grep -vE 'failed \(exit [0-9]+\)|command: return ' \
+      | head -10 | sed 's/^/      /' >&2
   fi
 }
 
@@ -447,8 +582,15 @@ main() {
   check_cli
 
   say 'result'
+  if [ "$FAILURES" -eq 0 ] && [ "$CHECKS" -lt "$CHECKS_MIN" ]; then
+    printf 'only %d check(s) actually ran on %s %s, expected at least %d\n' \
+      "$CHECKS" "$(os_id)" "$(os_version)" "$CHECKS_MIN" >&2
+    printf 'Zero failures out of almost no checks is not a pass. Refusing to report one.\n' >&2
+    printf 'logs and fingerprints are in %s\n' "$WORK" >&2
+    return 1
+  fi
   if [ "$FAILURES" -eq 0 ]; then
-    printf 'ALL CHECKS PASSED on %s %s\n' "$(os_id)" "$(os_version)"
+    printf 'ALL %d CHECKS PASSED on %s %s\n' "$CHECKS" "$(os_id)" "$(os_version)"
     return 0
   fi
   printf '%d CHECK(S) FAILED on %s %s\n' "$FAILURES" "$(os_id)" "$(os_version)" >&2

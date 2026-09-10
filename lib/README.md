@@ -109,4 +109,7 @@ logs a skip — it never silently installs nothing. Nothing beyond that is claim
 3. Route every mutation through `run`/`run_sudo` or an existing `fs.sh` writer.
 4. Make it a no-op when the machine is already in the desired state, and prove it by
    running the module twice.
-5. `bash -n`, then `shellcheck -x -S style`, then `shfmt -d -i 2 -ci -bn`.
+5. `bash -n`, then `shellcheck -x -P . -S style`, then `shfmt -d -i 2 -ci -bn` —
+   or just `make check`, which is the same three with the same flags. `-P .` is not
+   optional: without it shellcheck cannot resolve a `# shellcheck source=lib/…`
+   directive and reports SC1091 instead of following the file.

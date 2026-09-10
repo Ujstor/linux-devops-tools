@@ -314,11 +314,25 @@ fi
 
 # a plugin that decodes a secret must be dangerous:true, so that k9s drops it on
 # a readOnly (prod) context
+#
+# The pending plugin is flushed through ONE function, called from all three
+# places a plugin can end: the next plugin header, the first line of the NEXT
+# FILE, and end of input. The middle one is the one that was missing. awk's
+# FNR == 1 rule reset `name` without judging it, so the LAST plugin of every file
+# but the last was thrown away unexamined — 11 of the 57 shipped plugins,
+# `secret-show-value` among them, which is a Shift-C that decodes a secret key
+# into a pager. Deleting its `dangerous: true` still printed "ok". The same
+# violation one plugin higher in the same file fired correctly, which is what a
+# blind spot looks like from the outside: the rule works, on the inputs it sees.
 undecl=$(
   awk '
-    FNR == 1 { fname = FILENAME; sub(/.*\//, "", fname); name = ""; dang = 0; dec = 0; allow = 0 }
+    function flush() { if (name != "" && dec && !dang) print name " (" fname ")" }
+    FNR == 1 {
+      flush()
+      fname = FILENAME; sub(/.*\//, "", fname); name = ""; dang = 0; dec = 0; allow = 0
+    }
     /^  [A-Za-z0-9][A-Za-z0-9_.-]*:[ \t]*$/ {
-      if (name != "" && dec && !dang) print name " (" fname ")"
+      flush()
       name = $0; sub(/^  /, "", name); sub(/:[ \t]*$/, "", name); dang = 0; dec = 0; allow = 0
       next
     }
@@ -326,7 +340,7 @@ undecl=$(
     /[sS]8-ok:/ { dec = 0; allow = 1; next }
     /^[ \t]*#/ { next }
     /@base64d|base64 -d|base64 --decode|modify-secret/ { if (!allow) dec = 1 }
-    END { if (name != "" && dec && !dang) print name " (" fname ")" }
+    END { flush() }
   ' "$plugin_dir"/*.yaml
 )
 if [ -n "$undecl" ]; then
