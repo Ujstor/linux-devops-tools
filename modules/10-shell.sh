@@ -23,9 +23,12 @@
 #   that already has one). Every fragment stands on its own: each alias, prompt
 #   and completion is guarded by `command -v` and by a "did something else already
 #   do this" probe, so the set behaves identically with mybash and without it.
-#   mybash is DETECTED AND REPORTED here. DEVENV_INSTALL_MYBASH=1 clones it (and
-#   only clones it) for a user who wants it, and prints the two commands that
-#   would adopt it.
+#   mybash is DETECTED AND REPORTED here. It is also an entry in
+#   config/external-repos.sh with enabled=0 — which is how it became opt-in data
+#   rather than a special case in this file. DEVENV_EXTREPO_MYBASH=1 (or the older
+#   DEVENV_INSTALL_MYBASH=1) clones it, and ONLY clones it: its entry declares no
+#   symlink, so nothing of yours is touched, and the two commands that would adopt
+#   it are printed for you to run yourself.
 set -euo pipefail
 source "${DEVENV_HOME:?}/lib/common.sh"
 
@@ -79,14 +82,30 @@ install_fragments() {
   bashrc_dropin_prune "${FRAGMENTS[@]}" 55-sso.sh
 }
 
-# report_mybash — MUST-FIX P8.
-report_mybash() {
-  local dir="$HOME/linuxtoolbox/mybash"
+# install_external_configs — every entry in the list that this module owns.
+#   Today that is mybash and nothing else, and the module does not know that: the
+#   list decides. An entry of yours with module=shell is synced here too, with the
+#   same guarantees (never over a dirty worktree, never over a file of yours) and
+#   without this file changing.
+install_external_configs() {
+  extrepo_seed_user_list
+  extrepo_sync_module shell
+  return 0
+}
 
-  if [ "${DEVENV_INSTALL_MYBASH:-0}" = 1 ]; then
-    log_info "DEVENV_INSTALL_MYBASH=1 — cloning Ujstor/mybash to $dir"
-    devenv_sync_repo "https://github.com/Ujstor/mybash.git" "$dir" "${MYBASH_REF:-main}" \
-      || log_warn "could not clone mybash"
+# report_mybash — MUST-FIX P8. The CLONING half is the list's job (see above);
+# this is the reporting half, and it asks the list where mybash lives so there is
+# still exactly one place that knows the path. An entry the user deleted from the
+# list is not reported on at all.
+report_mybash() {
+  local dir
+  extrepo_load
+  dir=$(extrepo_get mybash dest) || {
+    log_debug "no mybash entry in the external-repos list — nothing to report"
+    return 0
+  }
+
+  if extrepo_enabled mybash; then
     log_info "mybash is cloned but NOT activated. This repo will not run its setup.sh."
     log_info "  To adopt its prompt only:  ln -sfn '$dir/starship.toml' ~/.config/starship.toml"
     log_info "  To adopt its ~/.bashrc:    review '$dir/.bashrc' first, then link it yourself."
@@ -483,6 +502,7 @@ module_main() {
   fi
 
   install_fragments || die "could not install the shell fragments"
+  install_external_configs
   report_mybash
 
   ensure_dir "$LOCAL_BIN" || true

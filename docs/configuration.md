@@ -8,7 +8,7 @@ Three layers, in the order they are decided:
    the installer seeds once and then never touches again.
 
 **Source of truth:** [`versions.env`](../versions.env) for pins, `bin/devenv --help` for flags.
-Verified 2026-09-10.
+Verified 2026-09-11.
 
 ## Pins
 
@@ -78,7 +78,8 @@ none of them is safe to imply:
 |---|---|---|
 | `DEVENV_GIT_APPLY=1` | `git` | let it write git config. Still set-if-absent, still never `user.*` |
 | `DEVENV_MIGRATE_APPLY=1` | `migrate` | neutralise what it found instead of only reporting |
-| `DEVENV_INSTALL_MYBASH=1` | `shell` | clone `mybash` instead of only detecting it |
+| `DEVENV_EXTREPO_<NAME>=0\|1` | `shell`, `editors` | turn one external config repo on or off for a run — see [External config repos](#external-config-repos) |
+| `DEVENV_INSTALL_MYBASH=1` | `shell` | the older spelling of `DEVENV_EXTREPO_MYBASH=1`: clone `mybash` instead of only detecting it |
 | `DEVENV_UV_FORCE=1` | `lang-python` | let `uv tool install --force` replace an existing shim |
 | `DEVENV_NODE_MANAGER=mise` | `lang-node` | use mise instead of nvm |
 | `DEVENV_DOCTOR_STRICT=1` | `doctor` | exit non-zero on a FAIL instead of only reporting |
@@ -100,11 +101,73 @@ anything that holds a hostname. Removed only by `devenv uninstall --all`.
 | `kube/oidc-user.template.yaml` | `auth-sso` | the OIDC user block `sso-kubeconfig-add` renders |
 | `tmux/devenv-clipboard.conf` | `auth-sso` | a sourceable tmux snippet — this repo never edits `~/.tmux.conf` in place |
 | `private.env` | `private` | `DEVENV_PRIVATE_HOST` and the tool lists. Empty means the module no-ops |
+| `external-repos.sh` | `shell`, `editors` | **your** external config repos. Seeded from `config/external-repos.sh.example` as pure comments; see below |
 | `personal.env` | you | the `personal` module reads it if it exists; it never writes a template |
 | `shell.env` | you | sourced by `~/.bashrc.d/05-env.sh` on every interactive shell |
 | `starship.toml` | you | an overlay merged into the shipped prompt, with `--starship overlay` |
 
 All of them are gitignored. None of them is ever committed.
+
+## External config repos
+
+The external git checkouts — `nvim-config`, `tmux-config`, `mybash` — are **one declarative
+list**, not three hardcoded clones. No module knows a URL, a ref, a checkout path or a symlink
+destination any more; each module only says *sync the entries I own*.
+
+| file | what it is |
+|---|---|
+| [`config/external-repos.sh`](../config/external-repos.sh) | the three this repository ships |
+| `~/.config/devops-env/external-repos.sh` | **yours.** Seeded once from `config/external-repos.sh.example`, never overwritten, never committed |
+
+Both are plain bash, sourced in that order by `lib/extrepo.sh`, and both contain nothing but
+`extrepo` calls. Sourcing yours second is what makes it powerful: a **new** name adds a
+checkout, and a name that is already in the shipped list **replaces it in place**, keeping its
+position. That is how you point `nvim-config` at your own fork without editing a module.
+
+```bash
+extrepo NAME url=… [ref=…] [dest=…] [link=…] [link_src=…] [module=…] [enabled=0|1] [desc=…]
+```
+
+| field | meaning |
+|---|---|
+| `name` | the id, the default directory name, and the suffix of its switch (`my-nvim` → `DEVENV_EXTREPO_MY_NVIM`) |
+| `url` | **required.** `https://`, `git@`, `ssh://`, `file://` or an absolute path |
+| `ref` | branch or tag. Empty is the remote's default branch. Ours are pinned in `versions.env` |
+| `dest` | where the checkout goes, **absolute**. Default `~/.local/share/devops-env/repos/<name>` (`$EXTREPO_ROOT`) |
+| `link` | absolute path of a symlink to create. Empty means none |
+| `link_src` | what inside the checkout `link` points at, relative to `dest`. Empty means the checkout directory itself |
+| `module` | which module syncs it: `editors` (default) or `shell` |
+| `enabled` | `1` or `0` (default `1`) |
+| `desc` | one line, for the log |
+
+The three shipped entries, and why each looks the way it does:
+
+| entry | ref pin | module | link | on? |
+|---|---|---|---|---|
+| `nvim-config` | `NVIM_CONFIG_REF` | `editors` | `~/.config/nvim` → the **checkout** (`init.lua` is at the repository root) | yes |
+| `tmux-config` | `TMUX_CONFIG_REF` | `editors` | `~/.tmux.conf` → `.tmux.conf` **inside** the checkout | yes |
+| `mybash` | `MYBASH_REF` | `shell` | **none** — it is cloned, never adopted | **no** |
+
+`mybash` ships off on purpose. It owns `~/.bashrc` on a box that has it and its `setup.sh`
+symlinks that file, so running it where a `~/.bashrc` already exists is a data-loss event. Every
+`~/.bashrc.d` fragment here works with it and without it. Turning it on clones it and does
+nothing else — its entry declares no symlink — and the two commands that would adopt it are
+printed for you to run yourself.
+
+Any entry, shipped or yours, can be switched for one run. The environment always wins over
+`enabled=`, in **both** directions:
+
+```bash
+DEVENV_EXTREPO_MYBASH=1      devenv --only shell      # on
+DEVENV_EXTREPO_NVIM_CONFIG=0 devenv --only editors    # off
+DEVENV_INSTALL_MYBASH=1      devenv --only shell      # the older spelling, still honoured
+```
+
+Nothing here can lose work of yours. A checkout with uncommitted changes is never updated — it
+is reported and left. A symlink is placed only over nothing, over another symlink, or over an
+**empty** directory; a real file or a non-empty directory is reported and left exactly as it is.
+An unreachable repository warns and the run carries on: a GitHub outage does not stop the rest
+of the module. Under `--dry-run` none of it writes anything.
 
 ## The `bashrc.d` fragment model
 

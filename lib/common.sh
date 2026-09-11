@@ -13,8 +13,12 @@
 # Load order (each file only needs the ones above it AT SOURCE TIME; function
 # references resolve at call time, so cycles between them are fine):
 #     log.sh       -> os.sh    -> run.sh -> fs.sh
-#     -> net.sh    -> pkg.sh   -> repo.sh
-#     -> shell.sh  -> lang.sh  -> wsl.sh -> registry.sh
+#     -> net.sh    -> pkg.sh   -> repo.sh    -> extrepo.sh
+#     -> shell.sh  -> lang.sh  -> wsl.sh     -> registry.sh
+#
+# repo.sh and extrepo.sh are neighbours and different things: repo.sh is apt
+# repositories (signing keys, source lines), extrepo.sh is the declarative list of
+# external git config repositories (nvim-config, tmux-config, mybash, yours).
 #
 # SPEC 5.3 names two of those files differently: `run.sh` holds the run/run_sudo/
 # confirm/need_sudo group that SPEC 5.3.2/5.3.3 listed under log.sh and os.sh, and
@@ -296,6 +300,8 @@ devenv_version_env() {
 . "$DEVENV_HOME/lib/pkg.sh"
 # shellcheck source=lib/repo.sh
 . "$DEVENV_HOME/lib/repo.sh"
+# shellcheck source=lib/extrepo.sh
+. "$DEVENV_HOME/lib/extrepo.sh"
 # shellcheck source=lib/shell.sh
 . "$DEVENV_HOME/lib/shell.sh"
 # shellcheck source=lib/lang.sh

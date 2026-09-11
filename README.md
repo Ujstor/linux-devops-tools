@@ -86,8 +86,15 @@ everything with a release binary will skip; the shell layer still works.
   overwritten, never pruned.
 * **`~/.local/bin/`** — `open-url`, `clip`, `clip-paste`, `sso-login`, and the `xdg-open`/`pbcopy`
   shims that make browser-based SSO work without a browser.
-* **`~/.config/devops-env/`** — `sso.env`, `bookmarks`, `private.env`, seeded once from the
-  shipped examples, mode 0600, then never touched again. Your real hostnames live here.
+* **`~/.config/devops-env/`** — `sso.env`, `bookmarks`, `private.env`, `external-repos.sh`,
+  seeded once from the shipped examples, mode 0600 where a hostname is involved, then never
+  touched again. Your real hostnames live here.
+* **`~/.local/share/devops-env/repos/`** — the external config checkouts (`nvim-config`,
+  `tmux-config`, and anything you add to `~/.config/devops-env/external-repos.sh`), plus the
+  symlinks each one declares. Never cloned over a dirty worktree, never linked over a file of
+  yours.
+* **`~/.tmux-sessions/`** — `tmux-save-session.sh`, and the restore scripts it writes beside
+  itself.
 * **`~/.config/k9s/`** — plugins, hotkeys, aliases and skins; `config.yaml` is created once and
   then left to k9s.
 * **`/etc/apt/sources.list.d/`** and **`/etc/apt/keyrings/`** — deb822 sources and armored keys

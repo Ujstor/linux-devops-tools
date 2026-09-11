@@ -4,7 +4,7 @@ These are enforced by `tests/policy/rules.sh`, `tests/policy/privacy.sh` and the
 matrix — not just promised.
 
 **Source of truth:** `bash tests/policy/rules.sh --list` and
-`bash tests/policy/privacy.sh --list`. Verified 2026-09-10.
+`bash tests/policy/privacy.sh --list`. Verified 2026-09-11.
 
 ## The seven rules
 
@@ -43,7 +43,7 @@ matrix — not just promised.
 | rewrite your git identity | `user.*`, `commit.gpgsign`, `credential.*`, `includeIf` schemes and `http.sslVerify` are never written. `doctor` warns about `http.sslVerify=false`; changing it is your call |
 | edit `~/.tmux.conf` in place | it ships a sourceable snippet at `~/.config/devops-env/tmux/devenv-clipboard.conf` |
 | merge your `KUBECONFIG` | any kubeconfig helper is opt-in and backs up before it writes |
-| curl-pipe an external config repo | `nvim-config` and `tmux-config` are cloned and symlinked, and never updated over a dirty worktree |
+| curl-pipe an external config repo | every external checkout is an entry in one declarative list: cloned and symlinked, never updated over a dirty worktree, and never linked over a file or a non-empty directory of yours |
 
 ## `--yes` is not `--force`
 

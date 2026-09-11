@@ -63,8 +63,58 @@ so explicitly and give a reason — there is a policy test for it.
 | gh | apt-v | — | `git`, `cloud` | min | the suite is literally `stable`, so the source line is identical on both distributions |
 | neovim | rel | `NEOVIM_VERSION` | `editors` | dev | always upstream: bookworm has 0.7.2 and noble 0.9.5, both too old for a modern Lua config |
 | tmux | apt (or source with `TMUX_FROM_SOURCE=1`) | — | `editors` | dev | |
-| `nvim-config`, `tmux-config` | git clone + symlink | `NVIM_CONFIG_REF`, `TMUX_CONFIG_REF` | `editors` | dev | cloned and symlinked, **never** curl-piped, and never updated over a dirty worktree |
-| `mybash` | detect and report | `MYBASH_REF` | `shell` | dev | it owns `~/.bashrc` on a box that has it; re-running its setup is a data-loss event, so this repository only reports what it finds |
+| `tmux-save-session.sh` | vendored script | — | `editors` | dev | installed to `~/.tmux-sessions/`, mode 0755. Only the script is vendored — its own repository holds generated session files, which are personal data. See below |
+| `nvim-config`, `tmux-config` | git clone + symlink | `NVIM_CONFIG_REF`, `TMUX_CONFIG_REF` | `editors` | dev | entries in the [external config repo list](configuration.md#external-config-repos). Cloned and symlinked, **never** curl-piped, never updated over a dirty worktree, and never placed over a file of yours |
+| `mybash` | git clone, **off by default** | `MYBASH_REF` | `shell` | dev | the same list, `enabled=0`. It owns `~/.bashrc` on a box that has it and re-running its setup is a data-loss event, so this repository detects and reports it. `DEVENV_EXTREPO_MYBASH=1` clones it — a clone and nothing else |
+
+### External config repos
+
+Those three are not hardcoded anywhere. They are entries in one declarative list —
+`config/external-repos.sh` plus your own `~/.config/devops-env/external-repos.sh` — and adding a
+fourth checkout, or repointing one at your fork, never means editing a module. Fields, switches
+and the guarantees are in [configuration.md](configuration.md#external-config-repos).
+
+### tmux: save and restore your sessions
+
+`tmux-save-session.sh` writes out every tmux session — windows, panes, layouts, working
+directories and the command running in each pane — as a **self-contained restore script**. It is
+installed to `~/.tmux-sessions/`, which is also where it writes (its `OUT_DIR` defaults to its own
+directory), so nothing it produces ever lands inside the checkout.
+
+Save:
+
+```bash
+~/.tmux-sessions/tmux-save-session.sh
+```
+
+That writes `~/.tmux-sessions/sessions-<date>-<n>.sh` (executable) and refreshes a `README.md`
+beside it listing every session, window and pane it captured. Auto-named sessions (`0`, `1`, …,
+what you get from a bare `tmux`) are skipped — they come back as empty sessions otherwise. Three
+knobs, all of them environment variables read at save time:
+
+| variable | effect |
+|---|---|
+| `SAVE_NUMERIC=1` | save the auto-named sessions too |
+| `EXCLUDE_RE=<ere>` | skip session names matching this extended regex |
+| `OUT_DIR=<path>` | write the restore script somewhere else |
+
+Restore — run the generated script, not the saver:
+
+```bash
+~/.tmux-sessions/sessions-2026-09-11-1234.sh              # restore, run the saved commands, attach
+DRY_RUN=1   ~/.tmux-sessions/sessions-2026-09-11-1234.sh  # type the commands into each pane, do not press Enter
+NO_ATTACH=1 ~/.tmux-sessions/sessions-2026-09-11-1234.sh  # restore only
+```
+
+Restoring is idempotent: a session that already exists is left completely alone, so re-running
+brings back only the ones you are missing. Commands matching `MANUAL_RE` (by default anything
+starting `sudo`, `su` or `doas`) are typed into the pane but not executed, so a restore never
+blocks on a password prompt or fires something destructive unattended.
+
+The install itself is idempotent too: byte-identical is a silent no-op, a newer version backs the
+old one up first, and a copy you edited yourself is backed up and reported (kept, with
+`DEVENV_KEEP_LOCAL=1`). `devenv uninstall` removes the script and leaves every session file you
+saved where it is.
 
 ## Kubernetes core (module `kubernetes`)
 
