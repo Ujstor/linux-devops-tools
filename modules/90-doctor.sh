@@ -27,6 +27,24 @@
 # Exit status is 0 even when there are findings, so `devenv --profile devops` stays
 # green on a machine that merely has warnings. Set DEVENV_DOCTOR_STRICT=1 to make
 # any FAIL exit non-zero (that is the form to use in CI).
+#
+# IN-PROCESS ARTEFACTS, and why some of what follows looks roundabout.
+# As module 90 of a profile run, doctor is a CHILD PROCESS of bin/devenv and
+# inherits ITS environment — the environment of the shell that started the
+# install, which is older than everything the run just did. $PATH in particular
+# predates ~/.bashrc.d/10-path.sh (written by module 10) and the ~/.local/bin that
+# module 23 created, and a child cannot reach back and fix its parent. So a bare
+#     case ":$PATH:" in *":$HOME/.local/bin:"*)
+#     have uv
+# asks about THIS PROCESS, not about the machine, and on a perfectly good install
+# it reported "~/.local/bin is not on PATH", "/usr/bin precedes it" and "uv is not
+# installed" seconds after ~/.local/bin/uv had been written.
+#
+# The rule those three findings taught: a check about something the run just
+# installed reads the FILESYSTEM (does the drop-in exist, is the binary there) and
+# treats $PATH as evidence about the observer, not the observed. When the two
+# disagree, doctor says which is which — a doctor that cries wolf on a clean
+# install is worse than one that stays quiet.
 set -euo pipefail
 source "${DEVENV_HOME:?}/lib/common.sh"
 
@@ -294,20 +312,13 @@ check_shell() {
 # PATH and duplicate binaries
 # ---------------------------------------------------------------------------
 
-check_path() {
-  section 'PATH'
-  local bin="${DEVENV_BIN_DIR:-$HOME/.local/bin}"
-  case ":$PATH:" in
-    *":$bin:"*) ok "$bin is on PATH" ;;
-    *)
-      fail "$bin is not on PATH"
-      plan 'devenv --only shell             # 10-path.sh prepends it'
-      ;;
-  esac
-
-  # ~/.local/bin must come BEFORE /usr/bin, or the browser shims never win.
-  local p first='' parts=()
-  IFS=: read -r -a parts <<<"$PATH"
+# _path_precedence PATHSTR BIN
+#   Prints `local` when BIN appears in PATHSTR before /usr/bin and /bin, `system`
+#   when one of those comes first, and nothing when BIN is not in PATHSTR at all.
+#   Read-only.
+_path_precedence() {
+  local pathstr=$1 bin=$2 p first='' parts=()
+  IFS=: read -r -a parts <<<"$pathstr"
   for p in "${parts[@]}"; do
     if [ -n "$first" ]; then continue; fi
     case $p in
@@ -315,8 +326,88 @@ check_path() {
       /usr/bin | /bin) first=system ;;
     esac
   done
+  printf '%s' "$first"
+}
+
+# _next_shell_path
+#   Prints the PATH a NEW interactive shell would compute, or nothing when that
+#   cannot be established. Returns 1 in the latter case.
+#
+#   It SOURCES the installed ~/.bashrc.d/10-path.sh in a subshell, starting from
+#   this process's PATH — which is what a new shell does too, from the login PATH.
+#   Sourcing rather than reading: that fragment is [ -d ]-guarded and de-duplicating,
+#   so what it does to a PATH depends on which directories exist and on what is
+#   already in the list; grepping it for `.local/bin` would answer a different,
+#   easier question. It is the file this repository wrote and every interactive
+#   shell already runs; here it runs with its output discarded and only $PATH is
+#   read back. `set +eu` because a hand-edited copy must not take doctor with it.
+#
+#   The answer is only meaningful when ~/.bashrc actually loads the drop-ins, so
+#   the caller checks that too — check_shell reports a missing block separately.
+_next_shell_path() {
+  local f="${DEVENV_DROPIN_DIR:-$HOME/.bashrc.d}/10-path.sh" out=''
+  [ -r "$f" ] || return 1
+  out=$(
+    set +eu
+    # shellcheck source=/dev/null
+    . "$f" >/dev/null 2>&1
+    printf '%s' "$PATH"
+  ) || out=''
+  [ -n "$out" ] || return 1
+  printf '%s' "$out"
+}
+
+# _dropins_are_loaded — true when ~/.bashrc carries the managed block that sources
+# ~/.bashrc.d, i.e. when a new interactive shell really will read the fragments.
+# One block or several is check_shell's business; here any of them means "loaded".
+_dropins_are_loaded() {
+  local rc="${DEVENV_BASHRC:-$HOME/.bashrc}"
+  [ -f "$rc" ] || return 1
+  [ "$(count_blocks_in_file "$rc" '')" -ge 1 ]
+}
+
+check_path() {
+  section 'PATH'
+  local bin="${DEVENV_BIN_DIR:-$HOME/.local/bin}"
+
+  # THIS PROCESS's PATH, and the PATH a new shell would get. They differ during an
+  # install run, and the difference is the whole point — see the header.
+  local future='' stale=0
+  if _dropins_are_loaded; then
+    future=$(_next_shell_path) || future=''
+  fi
+
+  local live_has=0 future_has=0
+  case ":$PATH:" in *":$bin:"*) live_has=1 ;; esac
+  case ":$future:" in *":$bin:"*) future_has=1 ;; esac
+
+  if [ "$live_has" = 1 ]; then
+    ok "$bin is on PATH"
+  elif [ "$future_has" = 1 ]; then
+    stale=1
+    ok "$bin is on the PATH a new shell gets (~/.bashrc.d/10-path.sh prepends it)"
+    hint "not on THIS process's PATH — it predates the drop-in, or never loads it"
+    hint 'nothing to repair here — open a new shell, or:  exec bash -l'
+  else
+    fail "$bin is not on PATH, and no drop-in would put it there"
+    plan 'devenv --only shell             # 10-path.sh prepends it'
+  fi
+
+  # ~/.local/bin must come BEFORE /usr/bin, or the browser shims never win. Judge
+  # the PATH that will actually be used: this process's when it has $bin, the next
+  # shell's when only that one does.
+  local first=''
+  if [ "$live_has" = 1 ]; then
+    first=$(_path_precedence "$PATH" "$bin")
+  elif [ "$future_has" = 1 ]; then
+    first=$(_path_precedence "$future" "$bin")
+  fi
   if [ "$first" = system ]; then
-    fail "/usr/bin precedes $bin on PATH — the xdg-open shim will never be reached"
+    if [ "$stale" = 1 ]; then
+      fail "/usr/bin precedes $bin in a new shell too — the xdg-open shim will never be reached"
+    else
+      fail "/usr/bin precedes $bin on PATH — the xdg-open shim will never be reached"
+    fi
     plan 'devenv --only shell               # fixes the order deterministically'
   fi
 
@@ -371,8 +462,16 @@ check_python() {
   done < <(find /usr/lib/python3* -maxdepth 1 -name 'EXTERNALLY-MANAGED.old' 2>/dev/null)
   if [ "$found" = 0 ]; then ok 'PEP 668 marker is intact (never moved by this repo)'; fi
 
+  # uv lives in ~/.local/bin, which is exactly the directory a mid-install PATH
+  # does not have yet (see the header). `have uv` alone reported "uv is not
+  # installed" in the same run that had just installed it, so the filesystem is
+  # asked as well before anything is claimed.
+  local uvbin="${DEVENV_BIN_DIR:-$HOME/.local/bin}/uv"
   if have uv; then
     ok "uv $(uv --version 2>/dev/null | awk '{print $2}') is installed"
+  elif [ -x "$uvbin" ]; then
+    ok "uv $("$uvbin" --version 2>/dev/null | awk '{print $2}') is installed at $uvbin"
+    hint "it is not on THIS process's PATH — a new shell picks it up (see the PATH section)"
   else
     warn 'uv is not installed - python CLIs belong in "uv tool", never in pip --user'
     plan 'devenv --only lang-python'

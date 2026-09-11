@@ -664,6 +664,10 @@ deb_release_install() {
 #     --sudo           run the installer as root
 #     --shell BIN      interpreter (default: bash)
 #   ARGS after `--` are passed to the installer.
+#   The script is fetched into `devenv_execdir` and the installer's own TMPDIR is
+#   set to that directory, so a vendor script that downloads a binary and execs it
+#   still works where /tmp is mounted noexec. A caller's own `--env TMPDIR=…`
+#   overrides it.
 #   Honours --dry-run: the script is neither fetched nor executed.
 #   Returns the installer's exit status, or 1 on a download/verification failure.
 sh_installer_run() {
@@ -710,8 +714,17 @@ sh_installer_run() {
     return 0
   fi
 
+  # devenv_execdir, NOT devenv_tmpdir, and the installer's own TMPDIR is pointed
+  # at it as well. A vendor installer is rarely just a script: it downloads a
+  # BINARY into `mktemp -d` and execs it. With /tmp mounted noexec — the fleet's
+  # hardening role does exactly that — rustup's install.sh reports
+  #     error: Cannot execute /tmp/tmp.XXXXXXXXXX/rustup-init
+  #     (likely because of mounting /tmp as noexec)
+  # and the module fails. Setting TMPDIR moves that mktemp onto a filesystem that
+  # executes, which fixes every installer of that shape at once (uv, nvm, brew,
+  # claude, opencode), not just the one that was reported.
   local work script
-  work=$(devenv_tmpdir) || return 1
+  work=$(devenv_execdir) || return 1
   script="$work/installer.sh"
   download "$url" "$script" || return 1
   if [ -n "$sha" ]; then
@@ -721,9 +734,12 @@ sh_installer_run() {
     log_warn "  reason: ${reason:-none given at the call site}"
   fi
   run chmod 0755 -- "$script" || return 1
+  # TMPDIR goes FIRST so a caller's own --env TMPDIR=… still wins: `env` applies
+  # its assignments left to right.
+  local envv=("TMPDIR=$work" ${envs[0]+"${envs[@]}"})
   if [ "$as_root_flag" = 1 ]; then
-    run_sudo env "${envs[@]}" "$shellbin" "$script" "${iargs[@]}"
+    run_sudo env "${envv[@]}" "$shellbin" "$script" "${iargs[@]}"
   else
-    run env "${envs[@]}" "$shellbin" "$script" "${iargs[@]}"
+    run env "${envv[@]}" "$shellbin" "$script" "${iargs[@]}"
   fi
 }

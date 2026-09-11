@@ -169,25 +169,123 @@ pkg_install_first() {
   return 1
 }
 
+# _apt_can_read PATH   (private)
+#   Returns 0 when PATH and every directory above it are open to `other` — that is,
+#   when apt's unprivileged sandbox user `_apt` can open the file for itself.
+#
+#   Mode bits, not a live `sudo -u _apt test -r`: dropping to another uid needs
+#   root, and this question is asked BEFORE any privilege is acquired (a plain
+#   `devenv --dry-run`, or a box with no sudo, must still answer it). An ACL that
+#   grants _apt what the mode bits do not is therefore read as "no" — the only cost
+#   of that is one needless copy of a file we were about to install anyway.
+#
+#   `stat -c %A` is used rather than %a because its output is fixed-width from the
+#   left: index 7 is other-read, index 9 other-execute, and a trailing ACL "+" or
+#   SELinux "." cannot shift them. `t` counts as `x` — /tmp is drwxrwxrwt.
+#   Read-only; safe under --dry-run.
+_apt_can_read() {
+  local p=${1:?_apt_can_read: PATH required} mode d
+  mode=$(stat -Lc '%A' -- "$p" 2>/dev/null) || return 1
+  [ "${mode:7:1}" = r ] || return 1
+  d=${p%/*}
+  [ -n "$d" ] || d=/
+  while :; do
+    mode=$(stat -Lc '%A' -- "$d" 2>/dev/null) || return 1
+    case ${mode:9:1} in
+      x | t) ;;
+      *) return 1 ;;
+    esac
+    [ "$d" = / ] && break
+    d=${d%/*}
+    [ -n "$d" ] || d=/
+  done
+  return 0
+}
+
+# _apt_stage_deb DEBFILE   (private)
+#   Prints the path of a copy of DEBFILE that `_apt` can read; returns 1 when no
+#   such copy could be made. The caller owns the printed path and must remove its
+#   directory. Never called under --dry-run (it writes).
+#
+#   $TMPDIR is deliberately NOT honoured: on the boxes that need this at all it is
+#   as likely as not to point back inside $HOME, which is the thing being worked
+#   around. /var/tmp first (it is rarely a size-limited tmpfs, and a .deb can be
+#   hundreds of MB), then /tmp. Both are 1777 on every supported system; a hardened
+#   host may mount them noexec and nosuid, which is irrelevant here — apt only ever
+#   READS this file, and dpkg unpacks into / from it.
+_apt_stage_deb() {
+  local src=${1:?_apt_stage_deb: DEBFILE required} dir='' cand base
+  base=$(basename -- "$src")
+  for cand in /var/tmp /tmp; do
+    [ -d "$cand" ] && [ -w "$cand" ] || continue
+    dir=$(mktemp -d "$cand/devenv-deb.XXXXXXXX" 2>/dev/null) && break
+    dir=''
+  done
+  [ -n "$dir" ] || return 1
+  # mktemp -d gives 0700, which is exactly the problem being solved.
+  chmod 0755 "$dir" 2>/dev/null || :
+  if ! cp -- "$src" "$dir/$base" 2>/dev/null; then
+    rm -rf -- "$dir"
+    return 1
+  fi
+  chmod 0644 "$dir/$base" 2>/dev/null || :
+  if ! _apt_can_read "$dir/$base"; then
+    rm -rf -- "$dir"
+    return 1
+  fi
+  printf '%s\n' "$dir/$base"
+}
+
 # pkg_install_local DEBFILE
 #   Installs a local .deb.
 #   idempotency F16: uses `apt-get install ./file.deb`, which resolves dependencies
 #   UP FRONT and fails cleanly. `dpkg -i` followed by `apt-get -f install -y` is
 #   forbidden here: it is allowed to REMOVE packages to repair the broken state it
 #   created, unattended, after a third-party .deb.
+#
+#   THE SANDBOX. Every .deb this repository installs is downloaded to
+#   $DEVENV_CACHE/dl, i.e. under $HOME, which is 0750 on Ubuntu. apt hands local
+#   files to its `copy:` method, which runs as the unprivileged user `_apt`, so
+#   every single install printed
+#
+#       N: Download is performed unsandboxed as root as file
+#          '/home/<user>/.cache/devops-env/dl/<pkg>.deb' couldn't be accessed by
+#          user '_apt'.
+#
+#   — apt telling us it had switched its own privilege separation OFF because it
+#   could not read the file otherwise. Observed for k9s, kubecolor, dive, grpcurl,
+#   openbao and glab on a real install. The fix is a world-readable copy in
+#   /var/tmp for the duration of the install, removed afterwards. NOT `chmod o+x
+#   $HOME`: the sandbox is worth less than the home directory's permissions.
 #   Honours --dry-run. Returns non-zero when the install fails.
 pkg_install_local() {
-  local deb=${1:?pkg_install_local: DEBFILE required} abs
+  local deb=${1:?pkg_install_local: DEBFILE required} abs staged='' stagedir='' rc=0
   [ -r "$deb" ] || {
     log_error "no such .deb: $deb"
     return 1
   }
   abs=$(readlink -f -- "$deb")
+  local target=$abs
+
+  if ! is_dry_run && ! _apt_can_read "$abs"; then
+    if staged=$(_apt_stage_deb "$abs"); then
+      stagedir=${staged%/*}
+      target=$staged
+      log_debug "installing from $staged — apt's sandbox user cannot read $abs"
+    else
+      log_debug "no world-readable staging directory: apt will drop its download sandbox for $abs"
+    fi
+  fi
+
   pkg_update
-  _apt_get install "${_APT_OPTS[@]}" -- "$abs" || {
+  _apt_get install "${_APT_OPTS[@]}" -- "$target" || rc=$?
+  if [ -n "$stagedir" ]; then
+    rm -rf -- "$stagedir"
+  fi
+  if [ "$rc" -ne 0 ]; then
     log_error "apt-get refused to install $abs (unsatisfiable dependencies)"
     return 1
-  }
+  fi
   changed "dpkg install $(basename -- "$abs")"
   return 0
 }

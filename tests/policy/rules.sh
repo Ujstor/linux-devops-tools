@@ -144,7 +144,7 @@ CMD_POS='(^|[[:space:]]*[;&|]|&&|\|\||^[[:space:]]*(then|else|do)[[:space:]]+)[[
 
 RULES='strict-mode lib-shape meta-header common-entrypoint no-bare-sudo no-bare-apt
 no-bare-download no-sed-i no-append-dotfile no-rm-rf-unquoted no-os-release-source
-no-hardcoded-arch-url release-checksum pin-defined old-name exec-bit'
+no-hardcoded-arch-url release-checksum pin-defined old-name exec-bit noexec-scratch'
 
 RULES_DOC='
   strict-mode        every executable starts with #!/usr/bin/env bash and sets
@@ -176,6 +176,10 @@ RULES_DOC='
                      devops-env-config) may appear outside the migration
                      documents, and never inside a URL or a checkout path
   exec-bit           modules and bin/ are executable; lib/ is not
+  noexec-scratch     nothing under the run scratch dir (devenv_tmpdir,
+                     devenv_tmpfile) is ever executed or chmod +x-ed: /tmp is
+                     mounted noexec on every hardened host. A download that has
+                     to RUN belongs in devenv_execdir
 '
 
 # Every name this repository has had and shed. `Ujstor/devops-env-config` is not
@@ -455,6 +459,113 @@ rule_old_name() {
   return 0
 }
 
+# --- noexec-scratch --------------------------------------------------------
+#
+# $DEVENV_RUNDIR lives under $TMPDIR, which on a hardened host is /tmp, which is
+# mounted `noexec` — the fleet's own vm-hardening role makes exactly that change.
+# A file downloaded there can be read, copied, unpacked and installed, but it can
+# never be exec()'d, and the failure is one line of "Permission denied" a long way
+# from its cause. It cost a whole kubectl plugin roster and the rust toolchain on
+# one install:
+#
+#     .../krew-linux_amd64: Permission denied      -> krew self-install failed
+#     Cannot execute /tmp/tmp.XXXXXXXXXX/rustup-init
+#       (likely because of mounting /tmp as noexec) -> rustup could not be installed
+#
+# So: run it out of `devenv_execdir`, which probes for a filesystem that executes.
+# This rule holds that line. It is deliberately NOT "no chmod, no run anywhere" —
+# `install`, `tar`, `cp`, `awk -f` and `bash SCRIPT` all work fine on noexec, and
+# only a genuine execve() of a scratch path is a violation.
+#
+# LIMIT, stated so nobody trusts it further than it goes: the scan is per file and
+# follows one hop of assignment (`work=$(devenv_tmpdir)`, then `s="$work/x"`),
+# resetting at each top-level function. A path laundered through a third variable,
+# an array or a command substitution is not caught. It catches every shape this
+# repository actually writes.
+
+# The words a real execution may hide behind. `env` is one (`env "$x/bin"` runs
+# it). `bash` and `sh` are deliberately NOT: `bash "$script"` hands the file to an
+# interpreter, which noexec does not block, and which is therefore allowed.
+NOEXEC_GATE='run|run_sudo|run_quiet|as_root|exec|sudo|env|time|command'
+
+# noexec_scan_file FILE — report every execution of a $DEVENV_RUNDIR scratch path.
+noexec_scan_file() {
+  local f=$1
+  local base='DEVENV_RUNDIR' vars line stripped text pat known lineno=0
+  vars=$base
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    case $line in *"# policy-allow: noexec-scratch"*) continue ;; esac
+    stripped=${line#"${line%%[![:space:]]*}"}
+    case $stripped in '#'* | '') continue ;; esac
+
+    # Scratch variables are function-local in every file here, so the set resets
+    # at each top-level definition. Without this, `work=$(devenv_tmpdir)` in
+    # gh_release_install would still be "tracked" 250 lines later inside
+    # sh_installer_run, whose own `work` is an exec dir — a false positive on the
+    # very function this rule exists to keep correct.
+    if [[ $line =~ ^[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{? ]]; then
+      vars=$base
+    fi
+
+    # Learn: assigned straight from a scratch helper, or derived from one.
+    if [[ $line =~ ([A-Za-z_][A-Za-z0-9_]*)=\$\(devenv_tmp(dir|file)\) ]]; then
+      vars="$vars ${BASH_REMATCH[1]}"
+    fi
+    known=${vars// /|}
+    if [[ $line =~ ([A-Za-z_][A-Za-z0-9_]*)=\"?\$\{?($known)\}?/ ]]; then
+      vars="$vars ${BASH_REMATCH[1]}"
+      known=${vars// /|}
+    fi
+
+    text=$stripped
+    if [ ${#text} -gt 140 ]; then text="${text:0:137}..."; fi
+
+    # Flag 1: a scratch path in COMMAND position.
+    pat='(^|[;&|]|&&|\|\|)[[:space:]]*(('"$NOEXEC_GATE"')[[:space:]]+)*"?\$\{?('"$known"')\}?([/"[:space:]]|$)'
+    if [[ $line =~ $pat ]]; then
+      fail noexec-scratch "$f:$lineno" \
+        "executed out of \$DEVENV_RUNDIR (noexec on a hardened host) — use devenv_execdir: $text"
+      continue
+    fi
+    # Flag 2: chmod +x on one. Making it executable IS the statement of intent,
+    # wherever the exec then happens.
+    pat='chmod[[:space:]][^;|&]*\$\{?('"$known"')\}?([/"[:space:]]|$)'
+    if [[ $line =~ $pat ]]; then
+      fail noexec-scratch "$f:$lineno" \
+        "chmod +x on a \$DEVENV_RUNDIR path — if it must run, use devenv_execdir: $text"
+      continue
+    fi
+    # Flag 3: `cd` into one. Flags 1 and 2 both match on the scratch VARIABLE, so
+    # neither can see the shape that broke the tmux source build:
+    #     ( cd "$src" || exit 1; run ./configure ... )
+    # After the cd the command is a bare `./configure` with no variable in it at
+    # all. `(` counts as a command position here — unlike $CMD_POS — because what
+    # follows must be `cd` and then a scratch path, which no prose does.
+    pat='(^|[;&|(]|&&|\|\|)[[:space:]]*(run[[:space:]]+)?(cd|pushd)[[:space:]]+(--[[:space:]]+)?"?\$\{?('"$known"')\}?([/"[:space:]]|$)'
+    if [[ $line =~ $pat ]]; then
+      fail noexec-scratch "$f:$lineno" \
+        "cd into a \$DEVENV_RUNDIR path — a ./relative command there hits noexec; use devenv_execdir: $text"
+    fi
+  done <"$ROOT/$f"
+  return 0
+}
+
+rule_noexec_scratch() {
+  local -a files=()
+  mapfile -t files < <(
+    printf '%s\n' ${MODULES[0]+"${MODULES[@]}"} ${LIBS[0]+"${LIBS[@]}"} \
+      ${BINS[0]+"${BINS[@]}"}
+  )
+  local f
+  for f in ${files[0]+"${files[@]}"}; do
+    [ -n "$f" ] || continue
+    [ -f "$ROOT/$f" ] || continue
+    noexec_scan_file "$f"
+  done
+  return 0
+}
+
 rule_exec_bit() {
   local f
   while IFS= read -r f; do
@@ -486,6 +597,7 @@ run_rules() {
   if selected pin-defined; then rule_pin_defined; fi
   if selected old-name; then rule_old_name; fi
   if selected exec-bit; then rule_exec_bit; fi
+  if selected noexec-scratch; then rule_noexec_scratch; fi
   return 0
 }
 
@@ -572,6 +684,11 @@ lsb_release -cs
 url=https://example.com/dl/tool-linux-amd64.tar.gz
 gh_release_install owner/repo 'tool-{version}.tar.gz' tool "$MISSING_VERSION"
 source "${DEVENV_HOME}/lib/net.sh"
+work=$(devenv_tmpdir)
+installer="$work/vendor-init"
+run chmod 0755 -- "$installer"
+run "$work/vendor-init" --yes
+cd "$work/src" || exit 1
 stale_url_1=https://raw.githubusercontent.com/Owner/wsl2-config/main/install.sh
 stale_url_2=https://raw.githubusercontent.com/Owner/devops-env-config/main/install.sh
 stale_home=$HOME/.local/share/devops-env-config
@@ -626,6 +743,25 @@ EOF
     fi
   done
 
+  # Same reasoning, same shape: noexec-scratch is THREE independent detectors
+  # under one name (execute it / chmod +x it / cd into it), and any ONE of them
+  # firing puts the rule in $FIRED. Assert each detector separately, or two of
+  # them could rot while the self-test still printed `ok  noexec-scratch fires`.
+  local shape
+  while IFS= read -r shape; do
+    [ -n "$shape" ] || continue
+    if grep -A1 -e 'POLICY \[noexec-scratch\]' "$findings" | grep -qF -e "$shape"; then
+      printf '  ok    noexec-scratch catches "%s"\n' "$shape"
+    else
+      printf '  FAIL  noexec-scratch did not catch "%s"\n' "$shape"
+      rc=1
+    fi
+  done <<'SHAPES'
+executed out of $DEVENV_RUNDIR
+chmod +x on a $DEVENV_RUNDIR path
+cd into a $DEVENV_RUNDIR path
+SHAPES
+
   # A well-formed module must produce nothing at all.
   rm -f "$dir/modules/49-nopins.sh" "$dir/modules/50-bad.sh" "$dir/modules/51-dup.sh" \
     "$dir/lib/bogus.sh"
@@ -639,10 +775,18 @@ set -euo pipefail
 source "${DEVENV_HOME:?}/lib/common.sh"
 
 module_main() {
+  local work payload
   pkg_install ripgrep
   gh_release_install owner/repo 'tool_{version}_linux_{arch}.tar.gz' tool "$GOOD_VERSION" \
     --checksum-asset 'checksums.txt'
   run_sudo install -m 0755 /dev/null /usr/local/bin/tool
+  # The compliant halves of noexec-scratch, both of which must stay silent:
+  # a scratch dir that is only WRITTEN to, and an exec dir that is RUN from.
+  payload=$(devenv_tmpfile)
+  run install -m 0644 -- "$payload" /etc/tool.conf
+  work=$(devenv_execdir)
+  run chmod 0755 -- "$work/vendor-init"
+  run "$work/vendor-init" --yes
 }
 module_main "$@"
 EOF
