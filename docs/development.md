@@ -187,6 +187,15 @@ source "${DEVENV_HOME:?}/lib/common.sh"
 `run` takes **argv**, never a pipeline or a redirection. Build the payload in
 `"$(devenv_tmpdir)"` and install it with an argv-only command.
 
+Scratch comes in two flavours and the difference is load-bearing. `devenv_tmpdir` /
+`devenv_tmpfile` live under `$DEVENV_RUNDIR`, which is under `$TMPDIR`, which on a hardened
+host is `/tmp` **mounted `noexec`** — fine to write, unpack and `install` from, impossible
+to run. Anything that has to be **executed** (a downloaded installer binary, a vendor
+`install.sh`, a `./configure` tree) goes in `"$(devenv_execdir)"`, which probes for a
+filesystem that permits execution and falls back off `/tmp` when it must, saying so.
+`tests/policy/rules.sh --rule noexec-scratch` enforces it; see
+[lib/README.md](../lib/README.md#the-two-scratch-areas) for the full contract.
+
 ### The five rules
 
 1. Every mutation goes through `run`/`run_sudo` or a `lib/fs.sh` writer.

@@ -32,6 +32,11 @@
 #     `lang-python`. uv_tool_install is idempotent and logs a skip when the tool
 #     is already there, so whichever module runs first installs it and the other
 #     one costs nothing.
+#   * mkdocs belongs to THIS module (docs/tools.md files it under `iac`, and the
+#     why-it-is-shaped-like-this comment lives in _iac_python_tools below).
+#     modules/23-lang-python.sh installs it only when it is absent — that is what
+#     gives `--profile minimal`, which has no iac module, a docs toolchain — with
+#     the SAME spec, so the two never build two venvs for one tool.
 
 set -euo pipefail
 # shellcheck source=lib/common.sh
@@ -273,6 +278,12 @@ _iac_python_tools() {
   # mike stays in the SAME venv for the original reason: it is an mkdocs PLUGIN,
   # loaded by mkdocs's own interpreter. Installing it separately would give a
   # working `mike` command and an mkdocs that cannot see it.
+  #
+  # THIS MODULE OWNS mkdocs. modules/23-lang-python.sh carries the same line
+  # behind a `have mkdocs` guard so a profile without `iac` still gets it; the two
+  # specs must stay identical. It said `mkdocs-material --with mike` until a real
+  # install failed exactly as described above, which is how the copy came to be
+  # marked with an owner.
   if ! uv_tool_install mkdocs --with mkdocs-material --with mike; then
     _iac_fail "uv tool install mkdocs (with mkdocs-material and mike) failed"
   fi

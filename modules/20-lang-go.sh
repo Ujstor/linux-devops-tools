@@ -44,12 +44,24 @@ GOROOT_DIR=/usr/local/go
 #   kubelogin      modules/45-cloud.sh — AZURE's kubelogin. Never `go install`
 #                  int128/kubelogin: it writes the same $GOPATH/bin/kubelogin and
 #                  silently breaks `kubelogin convert-kubeconfig` for AKS
+#   go-blueprint   THE MODULE PATH IS LOWERCASE: `github.com/melkeydev/...`, while
+#                  the GitHub repository is `Melkeydev/go-blueprint`. They are
+#                  different namespaces and both spellings are correct where they
+#                  stand. go resolves a module path case-sensitively against the
+#                  path the module DECLARES, so the capitalised form failed the
+#                  whole roster on a real install with
+#                      module declares its path as: github.com/melkeydev/go-blueprint
+#                              but was required as: github.com/Melkeydev/go-blueprint
+#                  (v0.10.9's go.mod says `module github.com/melkeydev/go-blueprint`).
+#                  versions.env's `# renovate: depName=Melkeydev/go-blueprint` is a
+#                  GITHUB repo name, is correctly capitalised, and must NOT be
+#                  "fixed" to match this line — renovate would then find no releases.
 go_tools() {
   cat <<TOOLS
 golang.org/x/tools/cmd/goimports@${GO_TOOL_GOIMPORTS:-latest} goimports
 github.com/swaggo/swag/cmd/swag@${GO_TOOL_SWAG:?} swag
 github.com/a-h/templ/cmd/templ@${GO_TOOL_TEMPL:?} templ
-github.com/Melkeydev/go-blueprint@${GO_TOOL_GO_BLUEPRINT:?} go-blueprint
+github.com/melkeydev/go-blueprint@${GO_TOOL_GO_BLUEPRINT:?} go-blueprint
 github.com/google/go-containerregistry/cmd/crane@${GO_TOOL_CRANE:?} crane
 TOOLS
 }

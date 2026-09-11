@@ -17,6 +17,7 @@ _DEVENV_ASSERT=1
 
 T_PASS=0
 T_FAIL=0
+T_SKIP=0
 T_NAME=${T_NAME:-${0##*/}}
 
 DEVENV_HOME=${DEVENV_HOME:-$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}
@@ -153,8 +154,22 @@ t_section() { printf '  -- %s\n' "$*"; }
 # commented out, or that returned early before reaching them, also reports zero
 # failures, and `0 passed, 0 failed` would otherwise be a pass. An assertion
 # count of zero means the file measured nothing.
+# t_skip REASON — an assertion that cannot be made in this environment.
+#   Counted separately and NEVER as a pass: "it passed because we could not
+#   test it" is the kind of green this suite exists to avoid. The only use so
+#   far is a permission assertion under uid 0, where DAC_OVERRIDE makes
+#   "unwritable" unexpressible.
+t_skip() {
+  printf '    skip %s\n' "$*"
+  T_SKIP=$((T_SKIP + 1))
+}
+
 t_summary() {
-  printf '  %s: %d passed, %d failed\n' "$T_NAME" "$T_PASS" "$T_FAIL"
+  if [ "$T_SKIP" -gt 0 ]; then
+    printf '  %s: %d passed, %d failed, %d skipped\n' "$T_NAME" "$T_PASS" "$T_FAIL" "$T_SKIP"
+  else
+    printf '  %s: %d passed, %d failed\n' "$T_NAME" "$T_PASS" "$T_FAIL"
+  fi
   if [ "$T_PASS" -eq 0 ] && [ "$T_FAIL" -eq 0 ]; then
     printf '  %s: made no assertion at all — a test that cannot fail is not a test\n' \
       "$T_NAME" >&2

@@ -169,7 +169,7 @@ Decoded secrets go to the pager and nowhere else — never to a file, never to a
 | bao (OpenBao) | deb | `iac` | dev | `OPENBAO_VERSION`. The package is `openbao`, the binary is `bao` |
 | ansible, ansible-lint | uv | `iac` | dev | installed `--with kubernetes --with netaddr --with jmespath`, or half the playbooks fail at runtime |
 | checkov, yamllint, detect-secrets, pre-commit | uv | `lang-python`, `repo-dev` | dev | |
-| mkdocs (+ mkdocs-material, mike) | uv `mkdocs --with mkdocs-material --with mike` | `iac` | dev | the theme ships no console script, so `mkdocs` is the tool and the theme is a `--with`; `mike` is an mkdocs plugin and needs the same venv |
+| mkdocs (+ mkdocs-material, mike) | uv `mkdocs --with mkdocs-material --with mike` | `iac` | dev | the theme ships no console script, so `mkdocs` is the tool and the theme is a `--with`; `mike` is an mkdocs plugin and needs the same venv. `iac` **owns** it; `lang-python` installs the same spec only when `mkdocs` is absent, so a profile without `iac` still gets one |
 | black | uv | `lang-python` | full | |
 | specify-cli (Spec Kit) | uv `--from git+…` | `lang-python` | dev | `SPEC_KIT_REF` |
 | gh | apt-v | `cloud` | min | |

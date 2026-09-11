@@ -134,9 +134,30 @@ install_python_tools() {
   py_tool yamllint
   py_tool detect-secrets
 
-  # mike is an MkDocs PLUGIN: it has to live in mkdocs' own venv or `mike deploy`
-  # cannot import mkdocs, and `mkdocs serve` cannot find the plugin.
-  py_tool mkdocs-material --with mike
+  # THE REQUESTED PACKAGE MUST BE THE ONE THAT PROVIDES THE COMMAND.
+  # This line used to be `py_tool mkdocs-material --with mike`, which cannot work:
+  # mkdocs-material is a THEME and ships no console script, so uv installs the venv,
+  # finds no entry point and throws the whole thing away again —
+  #     No executables are provided by package `mkdocs-material`; removing tool
+  #     error: Failed to install entrypoints for `mkdocs-material`
+  # `mkdocs` is the package with the console script; the theme is a `--with`, and
+  # mike stays in the SAME venv because it is an mkdocs PLUGIN, imported by mkdocs's
+  # own interpreter (a separate `mike` venv gives a working `mike` and an mkdocs
+  # that cannot see it).
+  #
+  # OWNERSHIP (the trivy rule, the other way round): mkdocs belongs to
+  # modules/40-iac.sh — it is the docs toolchain, docs/tools.md files it under
+  # `iac`, and the long-form reasoning lives there. This module installs it ONLY
+  # when it is absent, so `--profile minimal` (no iac module) still gets a docs
+  # toolchain and a devops run installs it exactly once: the spec below is
+  # byte-identical to 40-iac.sh's, so both modules ask for one venv, and whichever
+  # runs second sees `uv tool list` already holding it and skips. Keep the two
+  # specs identical, or they will start reinstalling each other's venv.
+  if have mkdocs; then
+    log_skip "mkdocs is already installed (owner: the iac module)"
+  else
+    py_tool mkdocs --with mkdocs-material --with mike
+  fi
 
   # GitHub Spec Kit. There is no PyPI release, so it comes from git at a pinned
   # ref. The PACKAGE name is given first and the source second with --from: that

@@ -40,6 +40,14 @@ install_rustup() {
   # spelled `.` and once `source`, which is why matching on text never works).
   # --profile minimal: rustc + cargo + rust-std. rust-docs alone is ~200 MB and
   # nothing on a devops box reads it from disk.
+  #
+  # No TMPDIR is set here on purpose. sh_installer_run already runs the script
+  # from devenv_execdir with TMPDIR pointed at it, which is what makes this work
+  # on a host with /tmp noexec: install.sh puts rustup-init in `mktemp -d` and
+  # execs it, and without that it dies with
+  #     error: Cannot execute /tmp/tmp.XXXXXXXXXX/rustup-init
+  #     (likely because of mounting /tmp as noexec)
+  # Do not add a TMPDIR --env here; it would override the one that fixes it.
   sh_installer_run "https://sh.rustup.rs" \
     --reason 'rust-lang publishes rustup-init through this redirector and signs the release artefacts it fetches, not the shell wrapper; there is no stable per-release digest to pin' \
     --env "RUSTUP_HOME=$RUSTUP_HOME_DIR" --env "CARGO_HOME=$CARGO_HOME_DIR" \

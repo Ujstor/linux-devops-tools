@@ -165,7 +165,9 @@ install_tmux_from_source() {
   [ -f "$ar" ] || download "$url" "$ar" || return 1
   log_warn "building tmux $ver WITHOUT a checksum: tmux publishes no checksum asset"
 
-  work=$(devenv_tmpdir) || return 1
+  # devenv_execdir: `./configure` and everything the build generates is executed
+  # out of this tree, so it cannot live on a noexec filesystem.
+  work=$(devenv_execdir) || return 1
   run tar -C "$work" -xzf "$ar" || return 1
   local src="$work/tmux-$ver"
   [ -d "$src" ] || {

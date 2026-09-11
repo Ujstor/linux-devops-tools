@@ -122,5 +122,12 @@ open-url --mode       # wsl | gui | print
 sso-login --status    # what is authenticated, and until when
 ```
 
+`exec bash -l` comes first on purpose. A run's own `doctor` module is a child of the process you
+started the install from, so it sees that shell's `PATH` — which predates `~/.bashrc.d/10-path.sh`
+and the `~/.local/bin` the run just created. Doctor checks the filesystem as well and says which is
+which ("`~/.local/bin` is on the PATH a new shell gets"), rather than failing over its own stale
+environment; a `FAIL` there means the drop-in really is missing, not that you have not opened a new
+shell yet.
+
 Logging in from a box with no browser is [docs/sso.md](sso.md). Every knob that changes what a
 run does is [docs/configuration.md](configuration.md).

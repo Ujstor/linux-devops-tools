@@ -54,7 +54,10 @@ jobs:
 
       - name: Versions
         run: |
-          shellcheck --version || true
+          # The runner's apt shellcheck is NOT what lints this tree — see the
+          # USE_DOCKER=1 note below. Printed only to make the drift visible.
+          printf 'runner apt shellcheck (unused): '; shellcheck --version 2>/dev/null | awk '/^version:/{print $2}' || true
+          printf 'pinned linter (used):          '; make -s print-linters 2>/dev/null || grep -E '^SHELLCHECK_IMAGE|^SHFMT_IMAGE' Makefile
           docker --version || true
 
       # SH_FILES is built from $(wildcard …), so a directory that stops matching
@@ -64,11 +67,14 @@ jobs:
       - name: The lint list still covers the tree
         run: bash tests/policy/lint-coverage.sh --self-test
 
-      # `make check` is lint-coverage + syntax + shellcheck + shfmt --diff. shfmt
-      # comes from a container when it is not on PATH, which is the case on the
-      # runner.
+      # USE_DOCKER=1 is load-bearing, not a preference. The runner ships
+      # /usr/bin/shellcheck 0.9.0, and without this the Makefile prefers a PATH
+      # binary — so CI linted with 0.9.0 while a laptop with no shellcheck
+      # installed used the pinned container (0.11.0). They disagree: an SC2015 in
+      # lib/pkg.sh was clean locally and failed here. Forcing the container makes
+      # CI, a laptop and the GitLab shell-ci image all run the SAME pinned linter.
       - name: make check
-        run: make check
+        run: make check USE_DOCKER=1
 
   policy:
     name: policy rules

@@ -334,7 +334,8 @@ krew_root() { printf '%s\n' "${KREW_ROOT:-$HOME/.krew}"; }
 #   Installs or updates krew itself, pinned to $KREW_VERSION.
 #   Skips (log_skip + return 0, never a failure) when kubectl is absent.
 #   Version-gated on `kubectl krew version`'s GitTag line. Uses the published
-#   krew-linux_<arch>.tar.gz plus its .sha256 sidecar, unpacked in a temp dir, and
+#   krew-linux_<arch>.tar.gz plus its .sha256 sidecar, unpacked in an EXEC-CAPABLE
+#   temp dir (devenv_execdir — the unpacked artefact is itself the installer), and
 #   runs the installer with stdin closed.
 #   Honours --dry-run. Returns 0 when installed or skipped, 1 on a hard failure.
 krew_bootstrap() {
@@ -359,7 +360,12 @@ krew_bootstrap() {
     changed "krew $tag"
     return 0
   fi
-  work=$(devenv_tmpdir) || return 1
+  # devenv_execdir, NOT devenv_tmpdir: the krew "installer" IS the downloaded
+  # binary, and it has to be exec()'d. On a host with /tmp mounted noexec — which
+  # the fleet's own hardening role does — $DEVENV_RUNDIR gives
+  #     .../krew-linux_amd64: Permission denied
+  #     -> "krew self-install failed" -> the whole plugin roster skipped.
+  work=$(devenv_execdir) || return 1
   download "$url" "$work/$asset" || return 1
   if download "$url.sha256" "$work/$asset.sha256"; then
     verify_sha256 "$work/$asset" "$(awk '{print $1; exit}' "$work/$asset.sha256")" || return 1

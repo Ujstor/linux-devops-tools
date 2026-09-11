@@ -52,7 +52,7 @@ Rules that hold in every library file:
 
 | file | owns | SPEC §5.3 name |
 |---|---|---|
-| `common.sh` | entry point, globals, tmpdirs, `versions.env`, traps | `common.sh` |
+| `common.sh` | entry point, globals, scratch dirs, `versions.env`, traps | `common.sh` |
 | `log.sh` | `log_*`, `die`, `skip`, colour | `log.sh` |
 | `os.sh` | distro/arch/platform detection, the `OS_*`/`IS_*` contract | `os.sh` |
 | `run.sh` | **the `--dry-run` gate**, `run`/`run_sudo`, sudo, `confirm`, `changed` | split out of `log.sh` + `os.sh` |
@@ -73,6 +73,52 @@ sources a library file by name, so the split is invisible to callers.
 
 `lib/awk/` holds standalone awk programs (`k9s-set-skin.awk`) and is not part of this
 API.
+
+## The two scratch areas
+
+`common.sh` hands out scratch space from **two** places, and picking the wrong one is a
+real bug, not a style choice.
+
+| helper | lives under | use it for |
+|---|---|---|
+| `devenv_tmpdir` / `devenv_tmpfile` | `$DEVENV_RUNDIR` (`$TMPDIR`, never `$HOME`) | anything **written, read, unpacked or installed**: a payload for `install`, a `tar -x` target, an `awk` program, a downloaded `.deb` |
+| `devenv_execdir` | `$DEVENV_EXECROOT` (probed) | anything that has to **run**: a downloaded installer binary, a vendor `install.sh`'s `$TMPDIR`, a `./configure` tree |
+
+`$DEVENV_RUNDIR` is under `$TMPDIR` on purpose — the acceptance test fingerprints `$HOME`
+and `/etc` around a dry run, so the scratch must not appear in either. On a hardened host
+`$TMPDIR` is `/tmp` and **`/tmp` is mounted `noexec`** (the fleet's own vm-hardening role
+sets exactly that), so nothing there can be `exec()`d. That cost one real install its whole
+kubectl plugin roster and its rust toolchain:
+
+```
+.../krew-linux_amd64: Permission denied            -> krew self-install failed
+Cannot execute /tmp/tmp.XXXXXXXXXX/rustup-init
+  (likely because of mounting /tmp as noexec)      -> rustup could not be installed
+```
+
+`devenv_execdir` is the answer. Its contract:
+
+* Prints a **fresh empty directory** that is writable **and** on a filesystem that permits
+  execution. Returns 1, with an actionable message, when this host has none.
+* It **probes** — writes a tiny script, `chmod +x`, runs it, checks the exit status.
+  `mount` output and `/proc/mounts` are never parsed: bind mounts, overlays and user
+  namespaces all make them lie about the directory you are actually holding.
+* Candidates, first to pass the probe wins:
+  `$TMPDIR` → `/tmp` → `$XDG_RUNTIME_DIR` → `$DEVENV_CACHE/exec` → `$HOME/.cache/devops-env/exec`.
+* When it falls off `/tmp` it says so **once**, at `log_info`, naming the directory it
+  chose. A silent fallback is how "/tmp is noexec" stayed invisible for a year.
+* One root per run. The choice is recorded in `$DEVENV_RUNDIR/execroot`, not only in an
+  exported variable, because every caller writes `work=$(devenv_execdir)` and a subshell's
+  `export` dies with the subshell. Child modules share the same root.
+* Cleaned up by the EXIT trap of whichever process owns `$DEVENV_RUNDIR`, including the
+  `exec/` parent the `$HOME` fallback had to create.
+* **Not for use under `--dry-run`** — allocating the root can create directories. Every
+  caller returns on `is_dry_run` first.
+
+Executing anything out of `$DEVENV_RUNDIR`, or `chmod +x`-ing a path in it, is a policy
+violation: `tests/policy/rules.sh --rule noexec-scratch`. Note what is *not* a violation,
+because `noexec` does not block it: `install`, `tar`, `cp`, `awk -f`, and running a script
+through an explicit interpreter (`bash "$script"`).
 
 ## The rules the library exists to enforce
 

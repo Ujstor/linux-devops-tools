@@ -79,6 +79,7 @@ cannot get — exits `78`, is recorded as a **SKIP**, and the run continues. The
 | `pin-defined` | every `*_VERSION`/`*_REF` a module reads exists in `versions.env` |
 | `old-name` | **neither** former repository name appears outside the migration documents, and never in a URL or a checkout path |
 | `exec-bit` | `modules/` and `bin/` are executable; `lib/` is not |
+| `noexec-scratch` | nothing under `$DEVENV_RUNDIR` is executed or `chmod +x`-ed — `/tmp` is `noexec` on a hardened host, so a download that must **run** goes in `devenv_execdir` |
 
 `tests/policy/privacy.sh` — this repository is public, so the gate is written **structurally**
 (shapes, not a denylist of real values; a denylist naming the secrets would itself be the leak):
