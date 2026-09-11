@@ -6,5 +6,5 @@
 # is — both CIs call the same make targets, so neither can drift from
 # a developer's laptop.
 include:
-  - component: $CI_SHELL@1.0.0
+  - component: $CI_SHELL@1.1.0
   - component: $CI_CLEANUP_ARTIFACTS@0.2.2
