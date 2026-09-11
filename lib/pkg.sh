@@ -217,7 +217,13 @@ _apt_stage_deb() {
   local src=${1:?_apt_stage_deb: DEBFILE required} dir='' cand base
   base=$(basename -- "$src")
   for cand in /var/tmp /tmp; do
-    [ -d "$cand" ] && [ -w "$cand" ] || continue
+    # An explicit `if`, not `[ ] && [ ] || continue`: shellcheck 0.9 flags that
+    # shape as SC2015 (the `||` also fires when the first test passes and the
+    # second fails, which is exactly what is meant here — but the linter cannot
+    # know that, and CI runs 0.9).
+    if [ ! -d "$cand" ] || [ ! -w "$cand" ]; then
+      continue
+    fi
     dir=$(mktemp -d "$cand/devenv-deb.XXXXXXXX" 2>/dev/null) && break
     dir=''
   done

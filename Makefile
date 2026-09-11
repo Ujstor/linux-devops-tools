@@ -36,8 +36,13 @@ SH_FILES := install.sh \
             $(wildcard tests/*/*.bash)
 
 # --- how to reach the tools ------------------------------------------------
-SHELLCHECK_IMAGE ?= koalaman/shellcheck:stable
-SHFMT_IMAGE      ?= mvdan/shfmt:latest
+# Pinned, not `:stable`/`:latest`. A floating linter tag means CI and a
+# laptop can disagree about whether the tree is clean — which is exactly
+# how an SC2015 in lib/pkg.sh passed here (container 0.11.0, clean) and
+# failed in CI (runner apt 0.9.0, flagged). These match what the GitLab
+# shell-ci image bakes in, so all three environments agree.
+SHELLCHECK_IMAGE ?= koalaman/shellcheck:v0.11.0
+SHFMT_IMAGE      ?= mvdan/shfmt:v3.12.0
 DOCKER           ?= docker
 USE_DOCKER       ?=
 

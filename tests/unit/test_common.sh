@@ -56,9 +56,20 @@ assert_eq '' "$(find "$probe_dir" -mindepth 1 -print 2>/dev/null)" \
 # A directory that cannot be written to is the shape every rejected candidate
 # has: on a noexec mount the write succeeds and the exec fails, here the write
 # fails — either way the answer is "not this one, try the next".
-ro_dir=$(devenv_tmpdir)
-chmod 0500 "$ro_dir"
-assert_fail 'an unwritable directory fails the probe' _devenv_exec_probe "$ro_dir"
+#
+# ROOT CANNOT EXPRESS "unwritable". DAC_OVERRIDE means mode 0500 is still
+# writable for uid 0, so the probe correctly SUCCEEDS and the assertion below is
+# simply not a valid statement about a root run. It is skipped rather than
+# inverted: a pass that only means "we are root" is not worth counting.
+# (Found by the GitLab runner, which runs jobs as root; the GitHub matrix creates
+# an unprivileged user and never hit it.)
+if [ "$(id -u)" -eq 0 ]; then
+  t_skip 'an unwritable directory fails the probe (root ignores write bits)'
+else
+  ro_dir=$(devenv_tmpdir)
+  chmod 0500 "$ro_dir"
+  assert_fail 'an unwritable directory fails the probe' _devenv_exec_probe "$ro_dir"
+fi
 
 t_section 'devenv_execdir'
 
@@ -101,7 +112,17 @@ t_section 'the candidate walk skips what it cannot use'
 saved_tmpdir=$TMPDIR
 bad_tmp="$T_SANDBOX/unwritable-tmp"
 mkdir -p "$bad_tmp"
-chmod 0500 "$bad_tmp"
+# As above: mode 0500 does not stop uid 0, so under root this candidate is
+# perfectly usable and "skips what it cannot use" has nothing to skip. Point the
+# first candidate at a path that is unusable for EVERYONE instead — a plain file
+# where a directory is required — so the walk is still exercised as root.
+if [ "$(id -u)" -eq 0 ]; then
+  bad_tmp="$T_SANDBOX/unwritable-tmp-file"
+  rm -rf "$T_SANDBOX/unwritable-tmp"
+  : >"$bad_tmp"
+else
+  chmod 0500 "$bad_tmp"
+fi
 rm -f "$DEVENV_RUNDIR/execroot"
 unset DEVENV_EXECROOT
 export TMPDIR="$bad_tmp"
