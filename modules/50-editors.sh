@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # meta: name=editors
-# meta: desc=neovim from upstream, tmux, and the external config repos
+# meta: desc=neovim from upstream, tmux, the tmux session saver and the external config repos
 # meta: profiles=devops,full
 # meta: os=any
 # meta: needs=
@@ -17,8 +17,13 @@
 # ~/.tmux.conf is a HAND-PATCHED regular file (2026-09-09 20:04, next to a
 # ~/fix-tmux-clipboard.sh written in the same minute) that the next blind pipe
 # would overwrite, and ~/.config/nvim is an EMPTY DIRECTORY, so the pipe was not
-# even achieving anything. Replaced by: clone -> refuse if dirty -> symlink after
-# a backup.
+# even achieving anything. Replaced by: clone -> refuse if dirty -> symlink, and
+# never over anything of yours.
+#
+# WHICH repositories those are is no longer written here. They are entries in
+# config/external-repos.sh, which lib/extrepo.sh reads together with your own
+# ~/.config/devops-env/external-repos.sh; this module only says "sync the entries
+# I own". Adding a fourth checkout does not touch this file.
 #
 # neovim always comes from upstream. bookworm ships 0.7.2 and noble 0.9.5; a
 # modern Lua config needs 0.10+, and the failure mode of a too-old nvim is a wall
@@ -27,7 +32,12 @@ set -euo pipefail
 source "${DEVENV_HOME:?}/lib/common.sh"
 
 NVIM_PREFIX=/usr/local
-REPO_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/devops-env/repos"
+
+# Where tmux-save-session.sh is installed, and — because the script defaults
+# OUT_DIR to its own directory — where the restore scripts it generates land.
+# That is the whole reason it does not go in ~/.local/bin: its output belongs
+# beside it, in a directory of its own, and never inside this checkout.
+TMUX_SESSIONS_DIR="$HOME/.tmux-sessions"
 
 # ---------------------------------------------------------------------------
 # neovim
@@ -211,75 +221,38 @@ install_tmux() {
 # The external config repos
 # ---------------------------------------------------------------------------
 
-# link_config SRC DST
-#   symlink_file refuses to clobber a real FILE without a backup, but it cannot
-#   back up a real DIRECTORY. ~/.config/nvim is exactly that case — empty on this
-#   box, but not necessarily on someone else's — so a directory is handled here:
-#   empty gets removed, non-empty is left completely alone and reported.
-link_config() {
-  local src=$1 dst=$2
-  if [ -L "$dst" ]; then
-    symlink_file "$src" "$dst"
-    return
-  fi
-  if [ -d "$dst" ]; then
-    if [ -n "$(ls -A "$dst" 2>/dev/null)" ]; then
-      log_warn "$dst is a non-empty directory — leaving your own config in place"
-      log_warn "  move it aside and re-run if you want the shipped one:  mv '$dst' '$dst.bak'"
-      return 0
-    fi
-    if is_dry_run; then
-      log_dryrun "rmdir empty $dst, then link it to $src"
-      return 0
-    fi
-    run rmdir -- "$dst" || return 0
-  fi
-  symlink_file "$src" "$dst"
-}
-
+# install_external_configs
+#   The whole of it. Which repositories, which refs, which symlinks and whether
+#   each one is switched on are DATA, in config/external-repos.sh and in the
+#   user's own ~/.config/devops-env/external-repos.sh; lib/extrepo.sh keeps
+#   devenv_sync_repo's guarantees (never over a dirty worktree, never over a file
+#   or a non-empty directory of yours) and warns-and-continues on a repository it
+#   cannot reach. Nothing below aborts the module.
 install_external_configs() {
-  ensure_dir "$REPO_ROOT" || return 0
-
-  # nvim-config: init.lua is at the repository root, so the CHECKOUT is what
-  # ~/.config/nvim must point at.
-  devenv_sync_repo "https://github.com/Ujstor/nvim-config.git" \
-    "$REPO_ROOT/nvim-config" "${NVIM_CONFIG_REF:-master}" \
-    || log_warn "could not sync nvim-config"
-  if [ -d "$REPO_ROOT/nvim-config" ]; then
-    link_config "$REPO_ROOT/nvim-config" "${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
-  fi
-
-  # tmux-config: the file at the repository root is .tmux.conf, so the SYMLINK
-  # target is that file, not the directory.
-  devenv_sync_repo "https://github.com/Ujstor/tmux-config.git" \
-    "$REPO_ROOT/tmux-config" "${TMUX_CONFIG_REF:-master}" \
-    || log_warn "could not sync tmux-config"
+  extrepo_seed_user_list
+  extrepo_sync_module editors
   install_tmux_conf
   return 0
 }
 
 # install_tmux_conf
+#   The half of the tmux configuration that is NOT a symlink — extrepo places
+#   ~/.tmux.conf itself, from the tmux-config entry's link=/link_src= fields.
+#
 #   SPEC §8 and SPEC-ADDENDUM C10: ~/.tmux.conf is NEVER edited in place. It is
 #   either linked to the clone (when the user has no file of their own) or left
-#   entirely alone with a report. The clipboard snippet that fixes the hardcoded
-#   clip.exe / powershell.exe lines lives in
-#   ~/.config/devops-env/tmux/devenv-clipboard.conf and is installed by
-#   modules/38-auth-sso.sh; here we only say how to source it.
+#   entirely alone with a report. What is left here is the fallback for a box with
+#   no checkout at all, and the three findings worth printing about whatever file
+#   ended up there. The clipboard snippet that fixes the hardcoded clip.exe /
+#   powershell.exe lines lives in ~/.config/devops-env/tmux/devenv-clipboard.conf
+#   and is installed by modules/38-auth-sso.sh; here we only say how to source it.
 install_tmux_conf() {
-  local conf="$HOME/.tmux.conf" src="$REPO_ROOT/tmux-config/.tmux.conf"
+  local conf="$HOME/.tmux.conf"
   local snippet="${XDG_CONFIG_HOME:-$HOME/.config}/devops-env/tmux/devenv-clipboard.conf"
 
-  if [ ! -e "$conf" ]; then
-    if [ -r "$src" ]; then
-      symlink_file "$src" "$conf"
-    elif [ -r "$DEVENV_HOME/config/tmux/minimal.tmux.conf" ]; then
-      log_info "no tmux-config checkout — installing the minimal fallback tmux.conf"
-      write_if_changed "$conf" 0644 <"$DEVENV_HOME/config/tmux/minimal.tmux.conf"
-    fi
-  elif [ -L "$conf" ]; then
-    [ -r "$src" ] && symlink_file "$src" "$conf"
-  else
-    log_info "$conf is a regular file of your own — not touched, not overwritten"
+  if [ ! -e "$conf" ] && [ -r "$DEVENV_HOME/config/tmux/minimal.tmux.conf" ]; then
+    log_info "no tmux config was linked — installing the minimal fallback tmux.conf"
+    write_if_changed "$conf" 0644 <"$DEVENV_HOME/config/tmux/minimal.tmux.conf"
   fi
 
   # The three findings 90-doctor.sh reports in full. Printed here too, because
@@ -302,6 +275,51 @@ install_tmux_conf() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# tmux session saver
+# ---------------------------------------------------------------------------
+
+# install_tmux_session_saver
+#   Installs config/tmux/tmux-save-session.sh into ~/.tmux-sessions/, mode 0755.
+#
+#   Only the SCRIPT is vendored here. Its own repository holds ~45 generated
+#   `sessions-*.sh` restore scripts, and each of those is a verbatim transcript of
+#   somebody's working day — every pane's working directory and the command it was
+#   running. That is personal data and it is not going in a public repository, so
+#   this repository does not clone that repository at all. (It is also why the
+#   script's OUT_DIR defaults to its own directory and why that directory is
+#   ~/.tmux-sessions and not this checkout: what it writes must land beside it, in
+#   your home, and never anywhere that gets committed.)
+#
+#   write_managed makes it idempotent: byte-identical is a silent no-op, a
+#   different version is BACKED UP before it is replaced, and a copy you edited
+#   yourself is backed up and reported (or kept, with DEVENV_KEEP_LOCAL=1). It is
+#   recorded in the manifest, so `devenv uninstall` removes the script and leaves
+#   every session file you saved alone.
+install_tmux_session_saver() {
+  local src="$DEVENV_HOME/config/tmux/tmux-save-session.sh"
+  local dst="$TMUX_SESSIONS_DIR/tmux-save-session.sh"
+
+  if [ ! -r "$src" ]; then
+    log_warn "config/tmux/tmux-save-session.sh is missing from the checkout — not installed"
+    return 0
+  fi
+  ensure_dir "$TMUX_SESSIONS_DIR" || return 0
+  # Redirection, not a pipe: the right-hand side of a pipeline is a subshell, and
+  # DEVENV_CHANGED_LAST set in one cannot be read back here (lib/fs.sh:19).
+  write_managed "$dst" 0755 <"$src" || {
+    log_warn "could not install $dst"
+    return 0
+  }
+  if [ "${DEVENV_CHANGED_LAST:-0}" = 1 ]; then
+    log_info "tmux sessions: save them with  $dst"
+    log_info "  it writes $TMUX_SESSIONS_DIR/sessions-<date>-<n>.sh — run that to restore them"
+  else
+    log_debug "the tmux session saver is already current at $dst"
+  fi
+  return 0
+}
+
 module_main() {
   log_step "editors"
 
@@ -316,6 +334,7 @@ module_main() {
 
   install_tmux
   install_external_configs
+  install_tmux_session_saver
 
   if have_root; then
     pkg_install_optional vim

@@ -26,10 +26,12 @@ SH_FILES := install.sh \
             $(wildcard lib/*.sh) \
             $(wildcard modules/*.sh) \
             $(wildcard tools/*.sh) \
+            $(wildcard config/*.sh) \
             $(wildcard config/bin/*) \
             $(wildcard config/lib/*.sh) \
             $(wildcard config/bashrc.d/*.sh) \
             $(wildcard config/bashrc.d/*.bash) \
+            $(wildcard config/tmux/*.sh) \
             $(wildcard tests/*.sh) \
             $(wildcard tests/*/*.sh) \
             $(wildcard tests/*/*/*.sh) \

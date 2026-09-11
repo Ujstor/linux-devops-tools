@@ -1,0 +1,63 @@
+# shellcheck shell=bash
+# ~/.config/devops-env/external-repos.sh — YOUR external config repositories.
+#
+# Seeded once from config/external-repos.sh.example and never overwritten. Sourced
+# straight after the shipped list, so:
+#
+#   * a NEW name adds a checkout — no module has to be edited, ever
+#   * a name that is already in the shipped list REPLACES it in place, keeping its
+#     position. That is how you point nvim-config at your own fork.
+#
+# It is plain bash, sourced by lib/extrepo.sh. Keep it to `extrepo` calls: anything
+# else runs on every `devenv` run.
+#
+# ---------------------------------------------------------------------------
+# extrepo NAME url=… [ref=…] [dest=…] [link=…] [link_src=…]
+#                    [module=…] [enabled=0|1] [desc=…]
+#
+#   name      id, default directory name, and the suffix of its switch:
+#             `my-nvim` -> DEVENV_EXTREPO_MY_NVIM
+#   url       required. https:// git@ ssh:// file:// or an absolute path
+#   ref       branch or tag. Empty = the remote's default branch
+#   dest      checkout path. Default ~/.local/share/devops-env/repos/<name>
+#   link      absolute path of a symlink to create. Empty = no symlink
+#   link_src  what inside the checkout the symlink points at, relative to dest.
+#             Empty = the checkout directory itself
+#   module    which module syncs it: `editors` (default) or `shell`
+#   enabled   1 or 0 (default 1)
+#   desc      one line, for the log
+#
+# Turn any entry on or off for one run, shipped or yours — the environment always
+# wins over `enabled=`:
+#
+#     DEVENV_EXTREPO_MYBASH=1      devenv --only shell
+#     DEVENV_EXTREPO_NVIM_CONFIG=0 devenv --only editors
+#
+# What is at `link` decides what happens, and only one of these replaces anything:
+# nothing -> linked · a symlink -> re-pointed · an EMPTY directory -> removed then
+# linked · a real file or a non-empty directory -> REPORTED AND LEFT ALONE. A dirty
+# checkout is never updated either. Nothing here can lose work of yours.
+# ---------------------------------------------------------------------------
+
+# Your own fork of the shipped neovim config — same name, so it replaces it:
+#
+# extrepo nvim-config \
+#   url=https://github.com/you/nvim-config.git \
+#   ref=main \
+#   link="${XDG_CONFIG_HOME:-$HOME/.config}/nvim" \
+#   desc='my neovim config'
+
+# A new checkout with a symlink to one file inside it:
+#
+# extrepo my-alacritty \
+#   url=https://github.com/you/alacritty-config.git \
+#   link="${XDG_CONFIG_HOME:-$HOME/.config}/alacritty/alacritty.toml" \
+#   link_src=alacritty.toml \
+#   desc='terminal config'
+
+# A checkout with no symlink at all — cloned and kept up to date, nothing else:
+#
+# extrepo scratch-notes \
+#   url=git@github.com:you/notes.git \
+#   dest="$HOME/notes" \
+#   desc='cloned, never linked'

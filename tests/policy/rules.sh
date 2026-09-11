@@ -255,7 +255,7 @@ rule_common_entrypoint() {
   done < <(module_files)
   # shellcheck disable=SC2016  # a literal pattern, not an expansion
   grep_rule common-entrypoint \
-    'source[[:space:]]+"?\$\{?DEVENV_HOME[^"]*/lib/(log|os|run|fs|net|pkg|repo|shell|lang|wsl|registry)\.sh' \
+    'source[[:space:]]+"?\$\{?DEVENV_HOME[^"]*/lib/(log|os|run|fs|net|pkg|repo|extrepo|shell|lang|wsl|registry)\.sh' \
     ${MODULES[0]+"${MODULES[@]}"}
   return 0
 }

@@ -42,8 +42,10 @@ PROFILE=ci bash tests/docker/matrix.sh              # a deeper, slower run
 ```
 
 `SH_FILES` deliberately includes `config/` — `config/bin/*` become executables in
-`~/.local/bin` and `config/bashrc.d/*` are sourced into every interactive shell. They are the
-files that run most often, so a lint gate that skipped them would be the wrong gate.
+`~/.local/bin`, `config/bashrc.d/*` are sourced into every interactive shell,
+`config/external-repos.sh` is sourced by every run, and `config/tmux/tmux-save-session.sh` is
+installed to `~/.tmux-sessions/` and run by hand. They are the files that run most often, so a
+lint gate that skipped them would be the wrong gate.
 
 > [!IMPORTANT]
 > **No gate skips itself.** Every target above stops with `MISSING GATE: …` when the script it
