@@ -857,14 +857,29 @@ check_tmux() {
     ok 'tmux does not fake a DISPLAY'
   fi
 
-  if grep -qE 'clip\.exe|powershell\.exe' "$f"; then
-    warn "$f hardcodes clip.exe / powershell.exe"
+  # A BARE `clip.exe` / `powershell.exe` is the bug this looks for: those names do
+  # not resolve inside WSL (the Windows PATH is not on the shell's PATH) and cannot
+  # exist on a Debian VM at all, so a binding that calls them is already dead.
+  #
+  # An ABSOLUTE path to one, reached only after probing for it, is the CORRECT
+  # portable spelling and must not be reported — Ujstor/tmux-config resolves a
+  # Windows root and then calls "$w/Windows/System32/clip.exe", which is right.
+  # Hence `[^/]`: a slash immediately before the name disqualifies the match.
+  # Comments are stripped first, because that config explains in prose that it
+  # contains no bare clip.exe — and the naive pattern matched the explanation.
+  if grep -vE '^[[:space:]]*#' "$f" | grep -qE '(^|[^/])(clip|powershell)\.exe'; then
+    warn "$f calls clip.exe / powershell.exe by name"
     hint 'neither name resolves on this box, and neither exists on a Debian VM'
     plan "replace them with 'clip' and 'clip-paste' in ~/.tmux.conf"
   fi
 
+  # The snippet exists for a config that has no clipboard handling of its own.
+  # One that already resolves a backend at copy time needs nothing from us, and
+  # telling it to source a second, competing binding is worse than saying nothing.
   if grep -Fq 'devops-env/tmux/devenv-clipboard.conf' "$f"; then
     ok 'tmux sources the shipped clipboard snippet'
+  elif grep -qE '@clip_copy_command|@override_copy_command|\.local/bin/clip' "$f"; then
+    ok 'tmux resolves the clipboard backend itself — the shipped snippet is not needed'
   else
     log_info 'to get portable copy/paste, add this line to ~/.tmux.conf:'
     hint 'source-file ~/.config/devops-env/tmux/devenv-clipboard.conf'

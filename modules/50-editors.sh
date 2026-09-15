@@ -258,12 +258,20 @@ install_tmux_conf() {
   # The three findings 90-doctor.sh reports in full. Printed here too, because
   # this is the module that just put a tmux config in place.
   if [ -f "$conf" ] || [ -L "$conf" ]; then
-    if ! grep -q 'devenv-clipboard.conf' "$conf" 2>/dev/null; then
+    # Only worth saying to a config that has no clipboard handling of its own.
+    # Ujstor/tmux-config resolves a backend at copy time; pointing it at a second,
+    # competing set of bindings is worse than saying nothing at all.
+    if ! grep -q 'devenv-clipboard.conf' "$conf" 2>/dev/null \
+      && ! grep -qE '@clip_copy_command|@override_copy_command|\.local/bin/clip' "$conf" 2>/dev/null; then
       log_info "to get portable copy/paste inside tmux, add this line to $conf:"
       log_info "    source-file $snippet"
     fi
-    if grep -qE 'clip\.exe|powershell\.exe' "$conf" 2>/dev/null; then
-      log_warn "$conf still calls clip.exe / powershell.exe by name."
+    # BARE names only. An absolute path reached after probing for a Windows root is
+    # the correct portable spelling, not a finding; comments are stripped because
+    # that config explains in prose that it contains no bare clip.exe, and the
+    # naive pattern matched the explanation. See check_tmux in modules/90-doctor.sh.
+    if grep -vE '^[[:space:]]*#' "$conf" 2>/dev/null | grep -qE '(^|[^/])(clip|powershell)\.exe'; then
+      log_warn "$conf calls clip.exe / powershell.exe by name."
       log_warn "  Neither resolves on this box (the Windows PATH is not inherited), so those"
       log_warn "  bindings are already dead. Replace them with 'clip' and 'clip-paste'."
     fi
