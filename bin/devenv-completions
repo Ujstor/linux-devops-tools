@@ -30,6 +30,29 @@ source "${DEVENV_HOME:?}/lib/common.sh"
 DEVENV_MODULE=completions
 export DEVENV_MODULE
 
+# Every generator below is found through PATH, so this script must not inherit
+# whichever PATH its caller happened to have. It did, and that was a real bug:
+# modules/10-shell.sh calls it TENTH, from a process whose PATH predates
+# ~/.bashrc.d/20-lang.sh, so on a fresh box `go-blueprint` and `crane` — which
+# live in GOPATH/bin — were invisible and got no completion. The SECOND run
+# inherited a PATH that did have them and cached them then, i.e. a run that
+# changed the box after the box was supposedly converged. tests/docker/ caught
+# exactly that.
+#
+# So resolve the three places this repository installs binaries, here, every
+# time: go_ensure_path adds /usr/local/go/bin and GOPATH/bin (and is a quiet
+# no-op with no Go toolchain), and the two fixed bin directories are prepended
+# if they are not already on PATH.
+go_ensure_path || true
+for _d in "$HOME/.local/bin" /usr/local/bin; do
+  case ":$PATH:" in
+    *":$_d:"*) ;;
+    *) PATH="$_d:$PATH" ;;
+  esac
+done
+unset _d
+export PATH
+
 # Tools whose generator is the conventional `<cmd> completion bash`.
 STD_COMPLETIONS=(
   kubectl helm k9s k3d kind kustomize argocd velero

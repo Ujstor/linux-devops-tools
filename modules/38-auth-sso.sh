@@ -168,7 +168,12 @@ report_environment() {
   fi
 
   if have tmux && [ -f "$HOME/.tmux.conf" ]; then
-    if ! grep -Fq 'devops-env/tmux/devenv-clipboard.conf' "$HOME/.tmux.conf"; then
+    # The snippet is for a config with no clipboard handling of its own. One that
+    # already resolves a backend at copy time — Ujstor/tmux-config does — needs
+    # nothing from us, and a second, competing set of copy bindings is worse than
+    # silence. Same test as check_tmux in modules/90-doctor.sh.
+    if ! grep -Fq 'devops-env/tmux/devenv-clipboard.conf' "$HOME/.tmux.conf" \
+      && ! grep -qE '@clip_copy_command|@override_copy_command|\.local/bin/clip' "$HOME/.tmux.conf"; then
       log_info "tmux: this repo never edits ~/.tmux.conf. Add this line yourself to get"
       log_info "  portable copy/paste:"
       log_info "  source-file ~/.config/devops-env/tmux/devenv-clipboard.conf"

@@ -672,6 +672,24 @@ devenv_sync_repo() {
     log_warn "$dir has uncommitted changes — not updating it"
     return 0
   fi
+  # `git fetch --depth=1` REWRITES .git/shallow on every call, even when it
+  # brings nothing new. In a shallow checkout that is a file change on every
+  # single run, which is exactly what the "install twice, change nothing" test
+  # in tests/docker/ is there to catch — and it caught it the moment an entry in
+  # the external-repo list became enabled by default.
+  #
+  # So ask the remote what the ref points at before touching anything local:
+  # ls-remote writes nothing into the checkout. Skipped under --dry-run, which
+  # must neither reach the network nor change the plan it prints.
+  if ! is_dry_run; then
+    local want head
+    want=$(git -C "$dir" ls-remote --quiet origin "${ref:-HEAD}" 2>/dev/null | awk 'NR==1 {print $1}')
+    head=$(git -C "$dir" rev-parse HEAD 2>/dev/null || printf '')
+    if [ -n "$want" ] && [ "$want" = "$head" ]; then
+      log_debug "$dir is already at ${want:0:12} — nothing to fetch"
+      return 0
+    fi
+  fi
   run git -C "$dir" fetch --depth=1 --quiet origin "${ref:-HEAD}" || {
     log_warn "could not fetch $url — keeping the existing checkout"
     return 0
