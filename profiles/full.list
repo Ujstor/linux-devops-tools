@@ -28,6 +28,7 @@ auth-sso                  # 38
 iac                       # 40
 cloud                     # 45
 editors                   # 50
+root-configs              # 52 — the same nvim/tmux/bash config for root
 media                     # 55 — ffmpeg, imagemagick, poppler, 7zip (yazi's previewers)
 ai                        # 6x — Claude Code (base install, native installer)
 wsl                       # 70

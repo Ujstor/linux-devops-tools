@@ -22,7 +22,7 @@
 #
 # WHAT AN ENTRY IS
 #
-#     extrepo NAME url=… [ref=…] [dest=…] [link=…] [link_src=…]
+#     extrepo NAME url=… [ref=…] [dest=…] [link=…] [link_src=…] [post=…]
 #                         [module=…] [enabled=0|1] [desc=…]
 #
 #     name      the entry's id. Also the default directory name, and the suffix of
@@ -36,6 +36,21 @@
 #     link_src  what inside the checkout `link` points at, relative to dest.
 #               Empty means the checkout directory itself (nvim-config: init.lua is
 #               at the repository root, so ~/.config/nvim is the directory).
+#     post      a command run INSIDE the checkout after it has been synced and
+#               linked — the checkout's own installer. Empty means none. It is the
+#               answer to "the symlink is not the whole install": tmux-config has
+#               to put TPM and the plugins in place or the config comes up bare,
+#               and mybash has to link its own three dotfiles. Each of those repos
+#               already ships an idempotent, backup-taking installer; running THAT
+#               keeps one source of truth per repo instead of a second copy of its
+#               install logic here.
+#
+#               This is NOT the `curl … | bash` that SPEC §8 ruled out. The pipe
+#               it ruled out ran an installer sight-unseen over whatever was in
+#               $HOME. Here the repository is cloned first, the symlink is placed
+#               first by the rules below, and only then is the script that is IN
+#               the checkout run — and both shipped installers refuse to replace a
+#               symlink they did not make.
 #     module    which module syncs it. Default `editors`; mybash is `shell`.
 #     enabled   1 or 0. Default 1. mybash ships as 0 — this repository deliberately
 #               does not require it, and the list is how it becomes opt-in instead
@@ -76,6 +91,7 @@ declare -A _EXTREPO_REF
 declare -A _EXTREPO_DEST
 declare -A _EXTREPO_LINK
 declare -A _EXTREPO_LINKSRC
+declare -A _EXTREPO_POST
 declare -A _EXTREPO_MODULE
 declare -A _EXTREPO_ON
 declare -A _EXTREPO_DESC
@@ -96,7 +112,7 @@ extrepo() {
   esac
   shift
 
-  local url='' ref='' dest='' link='' link_src='' module='editors' enabled=1 desc=''
+  local url='' ref='' dest='' link='' link_src='' post='' module='editors' enabled=1 desc=''
   local kv key val
   for kv in "$@"; do
     key=${kv%%=*}
@@ -107,6 +123,7 @@ extrepo() {
       dest) dest=$val ;;
       link) link=$val ;;
       link_src) link_src=$val ;;
+      post) post=$val ;;
       module) module=$val ;;
       enabled) enabled=$val ;;
       desc) desc=$val ;;
@@ -164,6 +181,7 @@ extrepo() {
   _EXTREPO_DEST[$name]=$dest
   _EXTREPO_LINK[$name]=$link
   _EXTREPO_LINKSRC[$name]=$link_src
+  _EXTREPO_POST[$name]=$post
   _EXTREPO_MODULE[$name]=$module
   _EXTREPO_ON[$name]=$enabled
   _EXTREPO_DESC[$name]=$desc
@@ -209,6 +227,7 @@ extrepo_reset() {
   _EXTREPO_DEST=()
   _EXTREPO_LINK=()
   _EXTREPO_LINKSRC=()
+  _EXTREPO_POST=()
   _EXTREPO_MODULE=()
   _EXTREPO_ON=()
   _EXTREPO_DESC=()
@@ -238,7 +257,7 @@ extrepo_names() {
 }
 
 # extrepo_get NAME FIELD
-#   Prints one field: url ref dest link link_src module enabled desc.
+#   Prints one field: url ref dest link link_src post module enabled desc.
 #   Returns 1 (printing nothing) for an unknown entry or an unknown field, so
 #   `dir=$(extrepo_get mybash dest) || dir=$fallback` reads correctly.
 extrepo_get() {
@@ -250,6 +269,7 @@ extrepo_get() {
     dest) printf '%s\n' "${_EXTREPO_DEST[$name]}" ;;
     link) printf '%s\n' "${_EXTREPO_LINK[$name]}" ;;
     link_src) printf '%s\n' "${_EXTREPO_LINKSRC[$name]}" ;;
+    post) printf '%s\n' "${_EXTREPO_POST[$name]}" ;;
     module) printf '%s\n' "${_EXTREPO_MODULE[$name]}" ;;
     enabled) printf '%s\n' "${_EXTREPO_ON[$name]}" ;;
     desc) printf '%s\n' "${_EXTREPO_DESC[$name]}" ;;
@@ -346,6 +366,56 @@ extrepo_place_link() {
   return 0
 }
 
+# extrepo_run_post NAME
+#   Runs the entry's `post=` command with the checkout as the working directory —
+#   the checkout's own installer, for the part of the install a symlink cannot do
+#   (TPM and the tmux plugins; mybash's three dotfiles).
+#
+#   Rules, all of them deliberate:
+#     * SKIPPED ENTIRELY under --dry-run. A post command is somebody else's
+#       script and this repository cannot promise what it would write.
+#     * skipped when the checkout is not there, so a GitHub outage earlier in the
+#       sync cannot make us run a stale installer.
+#     * NEVER fatal, and never even a failed return: a post script that exits 1
+#       warns and the run carries on, exactly like an unreachable repository.
+#     * run with `bash -c` from $dest, so `./install.sh` in the list means the one
+#       in the checkout and nothing on PATH.
+#     * DEVENV_EXTREPO_POST=0 turns every one of them off for a run, for the case
+#       where you want the checkouts and the symlinks and nothing else.
+#   Always returns 0.
+extrepo_run_post() {
+  local name=${1:?extrepo_run_post: NAME required}
+  local post dest rc=0
+  extrepo_known "$name" || return 0
+  post=${_EXTREPO_POST[$name]}
+  [ -n "$post" ] || return 0
+
+  case ${DEVENV_EXTREPO_POST:-1} in
+    0 | no | false | off)
+      log_skip "$name: post-install step disabled (DEVENV_EXTREPO_POST=0): $post"
+      return 0
+      ;;
+  esac
+
+  dest=${_EXTREPO_DEST[$name]}
+  if [ ! -d "$dest" ]; then
+    log_skip "$name: no checkout at $dest — its post-install step was not run"
+    return 0
+  fi
+  if is_dry_run; then
+    log_dryrun "run $name's own installer in $dest:  $post"
+    return 0
+  fi
+
+  log_info "$name: running its own installer ($post)"
+  (cd "$dest" && bash -c "$post") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log_warn "$name: '$post' exited $rc — the checkout and its symlinks are still in place"
+    log_warn "  re-run it yourself with:  (cd '$dest' && $post)"
+  fi
+  return 0
+}
+
 # extrepo_sync NAME
 #   Clones or fast-forwards one entry and places its symlink. A disabled entry is
 #   skipped with the switch that would turn it on. An unreachable repository warns
@@ -371,6 +441,7 @@ extrepo_sync() {
   devenv_sync_repo "$url" "$dest" "$ref" \
     || log_warn "could not sync $name from $url — keeping whatever is at $dest"
   extrepo_place_link "$name"
+  extrepo_run_post "$name"
   return 0
 }
 

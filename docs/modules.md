@@ -34,6 +34,7 @@ Verified 2026-09-11 against `devenv list`.
 | 40 | `iac` | dev, full, ci | any | amd64, arm64 | — | **yes** | `terraform`, `tflint`, `terraform-docs`, OpenBao's `bao`, and the Ansible/security Python CLIs |
 | 45 | `cloud` | dev, full, ci | any | amd64, arm64 | — | **yes** | `gh`, `glab`, `azure-cli`, `hcloud`, `crane`, Azure's `kubelogin` |
 | 50 | `editors` | dev, full | any | any | — | no | Neovim from upstream, `tmux`, `~/.tmux-sessions/tmux-save-session.sh`, and the `editors` entries of the [external config repo list](configuration.md#external-config-repos) — cloned and symlinked, never curl-piped |
+| 52 | `root-configs` | dev, full | any | any | `git` | yes | The same nvim, tmux and bash configuration for **root**, so `sudo -i` is not a bare shell: every enabled entry of the [external config repo list](configuration.md#external-config-repos) cloned under `/root` and linked from root's dotfiles. `DEVENV_ROOT_CONFIGS=0` skips it |
 | 55 | `media` | full | any | any | — | **yes** | `ffmpeg`, ImageMagick, `poppler-utils`, 7-Zip — Yazi's preview stack, each independently useful on a server |
 | 58 | `headless-browser` | **none** | !container | amd64, arm64 | `npx` | **yes** | Playwright's system dependency set, delegated to `npx playwright install-deps`. No browser UI |
 | 65 | `ai` | dev, full, ai | any | any | — | no | **Claude Code** via its native installer (install-if-absent, never managed afterwards); `opencode` and `crush` when `INSTALL_AI_AGENTS=1` |

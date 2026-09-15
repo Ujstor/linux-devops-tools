@@ -79,7 +79,9 @@ none of them is safe to imply:
 | `DEVENV_GIT_APPLY=1` | `git` | let it write git config. Still set-if-absent, still never `user.*` |
 | `DEVENV_MIGRATE_APPLY=1` | `migrate` | neutralise what it found instead of only reporting |
 | `DEVENV_EXTREPO_<NAME>=0\|1` | `shell`, `editors` | turn one external config repo on or off for a run — see [External config repos](#external-config-repos) |
-| `DEVENV_INSTALL_MYBASH=1` | `shell` | the older spelling of `DEVENV_EXTREPO_MYBASH=1`: clone `mybash` instead of only detecting it |
+| `DEVENV_INSTALL_MYBASH=0` | `shell` | the older spelling of `DEVENV_EXTREPO_MYBASH=0`: leave `mybash` alone |
+| `DEVENV_EXTREPO_POST=0` | `shell`, `editors`, `root-configs` | sync and symlink the external config repos, but do not run their own installers |
+| `DEVENV_ROOT_CONFIGS=0` | `root-configs` | do not give root the same nvim/tmux/bash configuration |
 | `DEVENV_UV_FORCE=1` | `lang-python` | let `uv tool install --force` replace an existing shim |
 | `DEVENV_NODE_MANAGER=mise` | `lang-node` | use mise instead of nvm |
 | `DEVENV_DOCTOR_STRICT=1` | `doctor` | exit non-zero on a FAIL instead of only reporting |
@@ -125,7 +127,7 @@ checkout, and a name that is already in the shipped list **replaces it in place*
 position. That is how you point `nvim-config` at your own fork without editing a module.
 
 ```bash
-extrepo NAME url=… [ref=…] [dest=…] [link=…] [link_src=…] [module=…] [enabled=0|1] [desc=…]
+extrepo NAME url=… [ref=…] [dest=…] [link=…] [link_src=…] [post=…] [module=…] [enabled=0|1] [desc=…]
 ```
 
 | field | meaning |
@@ -136,31 +138,74 @@ extrepo NAME url=… [ref=…] [dest=…] [link=…] [link_src=…] [module=…]
 | `dest` | where the checkout goes, **absolute**. Default `~/.local/share/devops-env/repos/<name>` (`$EXTREPO_ROOT`) |
 | `link` | absolute path of a symlink to create. Empty means none |
 | `link_src` | what inside the checkout `link` points at, relative to `dest`. Empty means the checkout directory itself |
+| `post` | a command run **inside** the checkout once it is synced and linked — the checkout's own installer, for the part a symlink cannot do. Skipped under `--dry-run`, skipped when there is no checkout, and never fatal. `DEVENV_EXTREPO_POST=0` turns every one off |
 | `module` | which module syncs it: `editors` (default) or `shell` |
 | `enabled` | `1` or `0` (default `1`) |
 | `desc` | one line, for the log |
 
 The three shipped entries, and why each looks the way it does:
 
-| entry | ref pin | module | link | on? |
-|---|---|---|---|---|
-| `nvim-config` | `NVIM_CONFIG_REF` | `editors` | `~/.config/nvim` → the **checkout** (`init.lua` is at the repository root) | yes |
-| `tmux-config` | `TMUX_CONFIG_REF` | `editors` | `~/.tmux.conf` → `.tmux.conf` **inside** the checkout | yes |
-| `mybash` | `MYBASH_REF` | `shell` | **none** — it is cloned, never adopted | **no** |
+| entry | ref pin | module | link | `post=` | on? |
+|---|---|---|---|---|---|
+| `nvim-config` | `NVIM_CONFIG_REF` | `editors` | `~/.config/nvim` → the **checkout** (`init.lua` is at the repository root) | — | yes |
+| `tmux-config` | `TMUX_CONFIG_REF` | `editors` | `~/.tmux.conf` → `.tmux.conf` **inside** the checkout | `./install.sh` | yes |
+| `mybash` | `MYBASH_REF` | `shell` | **none** — its own `setup.sh` links all three of its dotfiles | `./setup.sh` | yes |
 
-`mybash` ships off on purpose. It owns `~/.bashrc` on a box that has it and its `setup.sh`
-symlinks that file, so running it where a `~/.bashrc` already exists is a data-loss event. Every
-`~/.bashrc.d` fragment here works with it and without it. Turning it on clones it and does
-nothing else — its entry declares no symlink — and the two commands that would adopt it are
-printed for you to run yourself.
+All three are on, so the one documented command installs all of them:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ujstor/linux-devops-tools/main/install.sh | bash
+```
+
+**Why two of them need a `post=`.** A symlink was never the whole install:
+
+* `~/.tmux.conf` on its own is **inert**. Every `set -g @plugin` line in it is a no-op without
+  `~/.tmux/plugins/tpm`, so there is no catppuccin theme, no `tmux-resurrect` and — the one
+  people actually notice — no `tmux-yank`, which is what binds `y` in copy mode. The config
+  itself prints a yellow *"TPM is not installed"* bar to say so. `prefix + q` / `prefix + a`
+  also call `~/tmux.sh`, which nothing installed either. `post=./install.sh` puts TPM, every
+  plugin and `~/tmux.sh` in place. It finds `~/.tmux.conf` already symlinked and says so
+  (*"is a symlink … left alone"*) — that is the correct outcome, not an error.
+* `mybash` was cloned but never activated, so its `.bashrc`, starship prompt and fastfetch
+  config sat in `~/linuxtoolbox/mybash` doing nothing.
+
+Running each repository's **own** installer, rather than a second copy of its logic here, keeps
+one source of truth per repository. This is **not** the `curl … | bash` that was ruled out: the
+repository is cloned first, the symlink is placed first, and only then is the script that is *in
+the checkout* run — and both installers refuse to replace a symlink they did not make.
+
+**`mybash` ships on since 2026-09-15**, reversing the older decision. That decision read *"its
+`setup.sh` symlinks `~/.bashrc`, so running it where a `~/.bashrc` already exists is a data-loss
+event"*, and the premise stopped being true: `link_file()` backs a real `~/.bashrc` up to
+`~/.bashrc.bak` first, never overwrites an existing backup, and is a no-op when the link is
+already right. Every `~/.bashrc.d` fragment here still works with it and without it, which is
+what makes `DEVENV_EXTREPO_MYBASH=0` a real option rather than a broken one.
+
+### root gets the same configuration
+
+`sudo -i`, `sudo su -` and a root login shell read **root's** dotfiles, not yours — so on a box
+configured only for your user, root gets a bare prompt, a tmux with no prefix and none of its
+plugins, and a `vi` that is not neovim. The [`root-configs`](modules.md) module (52) closes that
+gap: every **enabled** entry above is cloned under `/root/.local/share/devops-env/repos/` and
+linked from root's dotfiles, with each entry's `post=` run under `sudo -H` so `HOME` is `/root`.
+
+`dest=` is deliberately **not** mirrored. Root's checkouts always land under root's own home,
+never at a path inside your home — that would break the moment your home is unmounted or
+re-created, and would let a non-root user edit what root's login shell sources. A `link=` that
+was not under `$HOME` is dropped rather than re-anchored, for the same reason.
+
+One switch covers both accounts: `DEVENV_EXTREPO_MYBASH=0` turns mybash off for you *and* for
+root. `DEVENV_ROOT_CONFIGS=0` skips the root half entirely.
 
 Any entry, shipped or yours, can be switched for one run. The environment always wins over
 `enabled=`, in **both** directions:
 
 ```bash
-DEVENV_EXTREPO_MYBASH=1      devenv --only shell      # on
-DEVENV_EXTREPO_NVIM_CONFIG=0 devenv --only editors    # off
-DEVENV_INSTALL_MYBASH=1      devenv --only shell      # the older spelling, still honoured
+DEVENV_EXTREPO_MYBASH=0      devenv --only shell         # off
+DEVENV_EXTREPO_NVIM_CONFIG=0 devenv --only editors       # off
+DEVENV_EXTREPO_POST=0        devenv --only editors       # checkouts and symlinks, no installers
+DEVENV_ROOT_CONFIGS=0        devenv                      # leave root's dotfiles alone
+DEVENV_INSTALL_MYBASH=0      devenv --only shell         # the older spelling, still honoured
 ```
 
 Nothing here can lose work of yours. A checkout with uncommitted changes is never updated — it

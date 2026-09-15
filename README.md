@@ -18,6 +18,13 @@ That clones the repository to `~/.local/share/linux-devops-tools` and runs the d
 profile. Nothing is installed system-wide until a module that needs root actually runs, and it
 asks then — never up front.
 
+It also installs all three config repos — [nvim-config](https://github.com/Ujstor/nvim-config),
+[tmux-config](https://github.com/Ujstor/tmux-config) and
+[mybash](https://github.com/Ujstor/mybash) — **for your user and for root**, so `sudo -i` is not
+a bare shell with a tmux that has no plugins. See
+[External config repos](docs/configuration.md#external-config-repos); `DEVENV_ROOT_CONFIGS=0`
+skips the root half, `DEVENV_EXTREPO_MYBASH=0` skips mybash for both accounts.
+
 ```bash
 # Look before you leap. Every mutation goes through one gate, so this changes nothing.
 curl -fsSL .../install.sh | bash -s -- --dry-run
@@ -92,7 +99,9 @@ everything with a release binary will skip; the shell layer still works.
 * **`~/.local/share/devops-env/repos/`** — the external config checkouts (`nvim-config`,
   `tmux-config`, and anything you add to `~/.config/devops-env/external-repos.sh`), plus the
   symlinks each one declares. Never cloned over a dirty worktree, never linked over a file of
-  yours.
+  yours. `mybash` keeps its own path, `~/linuxtoolbox/mybash`.
+* **`/root/.local/share/devops-env/repos/`** — the same checkouts again, for root, linked from
+  root's own dotfiles. Root's copies never point into your home.
 * **`~/.tmux-sessions/`** — `tmux-save-session.sh`, and the restore scripts it writes beside
   itself.
 * **`~/.config/k9s/`** — plugins, hotkeys, aliases and skins; `config.yaml` is created once and

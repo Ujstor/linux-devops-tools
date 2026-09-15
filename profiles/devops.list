@@ -23,6 +23,7 @@ auth-sso                  # 38 — open-url/clip shims, SSO helpers and template
 iac                       # 40 — terraform, tflint, terraform-docs, OpenBao
 cloud                     # 45 — gh, glab, azure-cli, hcloud, crane
 editors                   # 50 — neovim, tmux, the external config repos
+root-configs              # 52 — the same nvim/tmux/bash config for root
 ai                        # 6x — Claude Code (base install, native installer)
 wsl                       # 70 — no-op unless this really is WSL
 doctor                    # 90 — audit the result

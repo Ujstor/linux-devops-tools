@@ -17,18 +17,21 @@
 # user is not a sudoer. The package/binary half is guarded by have_root and
 # installs into ~/.local/bin instead of /usr/local/bin when root is unavailable.
 #
-# MUST-FIX P8 — the mybash decision, made once and applied everywhere:
-#   THIS REPO DOES NOT INSTALL OR REQUIRE Ujstor/mybash, and never runs its
-#   setup.sh (which symlinks ~/.bashrc and would be a data-loss event on a box
-#   that already has one). Every fragment stands on its own: each alias, prompt
-#   and completion is guarded by `command -v` and by a "did something else already
-#   do this" probe, so the set behaves identically with mybash and without it.
-#   mybash is DETECTED AND REPORTED here. It is also an entry in
-#   config/external-repos.sh with enabled=0 — which is how it became opt-in data
-#   rather than a special case in this file. DEVENV_EXTREPO_MYBASH=1 (or the older
-#   DEVENV_INSTALL_MYBASH=1) clones it, and ONLY clones it: its entry declares no
-#   symlink, so nothing of yours is touched, and the two commands that would adopt
-#   it are printed for you to run yourself.
+# mybash — the P8 decision, REVERSED on 2026-09-15, and why:
+#   The old rule was "this repo never installs Ujstor/mybash and never runs its
+#   setup.sh, which symlinks ~/.bashrc and would be a data-loss event on a box
+#   that already has one". The premise stopped being true: mybash's link_file()
+#   backs a real ~/.bashrc up to ~/.bashrc.bak before it links, never overwrites
+#   an existing backup, and is a no-op when the link is already correct.
+#   So mybash is now ON by default and its setup.sh is what activates it, through
+#   the `post=` field of its entry in config/external-repos.sh. This file still
+#   knows nothing about it beyond the reporting below — the list decides.
+#   Turn it off with DEVENV_EXTREPO_MYBASH=0 (or DEVENV_INSTALL_MYBASH=0).
+#
+#   What has NOT changed: no fragment requires it. Each alias, prompt and
+#   completion is guarded by `command -v` and by a "did something else already do
+#   this" probe, so the set behaves identically with mybash and without it — which
+#   is what makes turning it off a real option rather than a broken one.
 set -euo pipefail
 source "${DEVENV_HOME:?}/lib/common.sh"
 
@@ -93,10 +96,10 @@ install_external_configs() {
   return 0
 }
 
-# report_mybash — MUST-FIX P8. The CLONING half is the list's job (see above);
-# this is the reporting half, and it asks the list where mybash lives so there is
-# still exactly one place that knows the path. An entry the user deleted from the
-# list is not reported on at all.
+# report_mybash — the reporting half. Syncing and activating are the list's job
+# (see the header); this only says what ended up on the box, and it asks the list
+# where mybash lives so there is still exactly one place that knows the path. An
+# entry the user deleted from the list is not reported on at all.
 report_mybash() {
   local dir
   extrepo_load
@@ -105,24 +108,31 @@ report_mybash() {
     return 0
   }
 
-  if extrepo_enabled mybash; then
-    log_info "mybash is cloned but NOT activated. This repo will not run its setup.sh."
-    log_info "  To adopt its prompt only:  ln -sfn '$dir/starship.toml' ~/.config/starship.toml"
-    log_info "  To adopt its ~/.bashrc:    review '$dir/.bashrc' first, then link it yourself."
-    log_info "  Your linux-devops-tools block is re-added to whatever ~/.bashrc ends up being."
+  if ! extrepo_enabled mybash; then
+    if [ -d "$dir" ]; then
+      log_info "mybash is switched off but still checked out at $dir — left exactly as it is"
+    else
+      log_debug "mybash is switched off and not installed — nothing here depends on it"
+    fi
     return 0
   fi
 
-  if [ -d "$dir" ]; then
-    log_info "mybash is present at $dir — this repo neither updates nor runs it"
-    if [ -L "$HOME/.bashrc" ]; then
-      log_info "  ~/.bashrc is a symlink into it; the managed block is written through the link"
-    else
-      log_info "  ~/.bashrc is a regular file, so mybash is checked out but not linked."
-      log_info "  That is fine: every ~/.bashrc.d fragment works with or without mybash."
-    fi
+  if [ ! -d "$dir" ]; then
+    log_warn "mybash is enabled but there is no checkout at $dir — see the sync warnings above"
+    return 0
+  fi
+
+  if [ -L "$HOME/.bashrc" ]; then
+    log_info "mybash is active: ~/.bashrc -> $(readlink "$HOME/.bashrc")"
+    log_info "  the linux-devops-tools block is written through the link, into the checkout"
+  elif [ -e "$HOME/.bashrc.bak" ]; then
+    log_warn "mybash is checked out at $dir but ~/.bashrc is still a regular file."
+    log_warn "  A ~/.bashrc.bak exists, so its setup.sh has run before — re-run it to relink:"
+    log_warn "      (cd '$dir' && ./setup.sh)"
   else
-    log_debug "mybash is not installed — nothing here depends on it"
+    log_info "mybash is checked out at $dir; ~/.bashrc is a regular file and was not replaced"
+    log_info "  every ~/.bashrc.d fragment works either way — run its setup.sh to adopt it:"
+    log_info "      (cd '$dir' && ./setup.sh)"
   fi
   return 0
 }

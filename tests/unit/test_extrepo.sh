@@ -45,9 +45,22 @@ assert_eq '.tmux.conf' "$(extrepo_get tmux-config link_src)" \
 assert_eq "$sandbox/.tmux.conf" "$(extrepo_get tmux-config link)" 'to ~/.tmux.conf'
 
 assert_eq 'shell' "$(extrepo_get mybash module)" 'mybash is owned by the shell module'
-assert_eq '' "$(extrepo_get mybash link)" 'and declares NO symlink — it is cloned, never adopted'
-assert_fail 'mybash is OFF by default' extrepo_enabled mybash
-assert_ok 'while nvim-config is on' extrepo_enabled nvim-config
+assert_eq '' "$(extrepo_get mybash link)" \
+  'and declares NO symlink — its own setup.sh links all three of its dotfiles'
+# Reversed on 2026-09-15 together with the entry: mybash's link_file() backs a real
+# ~/.bashrc up before it links, so the data-loss premise behind enabled=0 is gone
+# and all three config repos now come from the one curl | bash.
+assert_ok 'mybash is ON by default' extrepo_enabled mybash
+assert_ok 'as is nvim-config' extrepo_enabled nvim-config
+assert_ok 'as is tmux-config' extrepo_enabled tmux-config
+
+# post= — the checkout's own installer, for the part a symlink cannot do.
+assert_eq './install.sh' "$(extrepo_get tmux-config post)" \
+  'tmux-config finishes its install itself: TPM, the plugins and ~/tmux.sh'
+assert_eq './setup.sh' "$(extrepo_get mybash post)" \
+  'and mybash links its own dotfiles'
+assert_eq '' "$(extrepo_get nvim-config post)" \
+  'nvim-config has none — the symlink really is the whole install'
 
 # The default checkout root, applied to any entry that does not set dest=. Compared
 # against $EXTREPO_ROOT and not a literal: XDG_DATA_HOME is honoured, and it is set
@@ -67,11 +80,11 @@ assert_eq 'DEVENV_EXTREPO_NVIM_CONFIG' "$(extrepo_switch nvim-config)" \
 
 # Each switch is read by NAME, through ${!var}, so shellcheck cannot see the use.
 # shellcheck disable=SC2034  # read indirectly by extrepo_enabled
-DEVENV_EXTREPO_MYBASH=1
-assert_ok 'DEVENV_EXTREPO_MYBASH=1 turns a shipped-off entry on' extrepo_enabled mybash
-# shellcheck disable=SC2034  # ditto
 DEVENV_EXTREPO_MYBASH=0
-assert_fail 'and =0 turns it off again' extrepo_enabled mybash
+assert_fail 'DEVENV_EXTREPO_MYBASH=0 turns a shipped-on entry off' extrepo_enabled mybash
+# shellcheck disable=SC2034  # ditto
+DEVENV_EXTREPO_MYBASH=1
+assert_ok 'and =1 turns it on again' extrepo_enabled mybash
 unset DEVENV_EXTREPO_MYBASH
 
 # shellcheck disable=SC2034  # ditto
@@ -218,5 +231,44 @@ extrepo off url=https://example.com/never-reached.git dest="$sandbox/never" enab
 extrepo_sync off
 assert_no_file "$sandbox/never" 'extrepo_sync does nothing for a disabled entry'
 assert_ok 'and syncing a name that does not exist is not an error' extrepo_sync no-such-entry
+
+t_section 'post= runs each checkout own installer'
+
+# The post command is run with `bash -c` FROM the checkout, so a relative
+# `./install.sh` means the one in the checkout. Proved by having it write a file
+# into $PWD and checking where that file landed.
+extrepo_reset
+printf '#!/bin/sh\nprintf ran > ./post-ran\n' >"$checkout/installer.sh"
+chmod +x "$checkout/installer.sh"
+
+extrepo withpost url=https://example.com/x.git dest="$checkout" post='./installer.sh'
+extrepo_run_post withpost
+assert_file "$checkout/post-ran" 'post= runs, with the checkout as the working directory'
+rm -f "$checkout/post-ran"
+
+# Never fatal. A post script that fails must warn and let the run carry on, the
+# same as an unreachable repository — the checkout and its symlinks are already
+# in place and are still worth having.
+extrepo failpost url=https://example.com/x.git dest="$checkout" post='exit 3'
+assert_ok 'a post= that exits non-zero is a warning, not a failure' extrepo_run_post failpost
+
+# Skipped under --dry-run: a post command is somebody else's script and this
+# repository cannot promise what it would write.
+DEVENV_DRY_RUN=1 extrepo_run_post withpost
+DEVENV_DRY_RUN=0
+assert_no_file "$checkout/post-ran" '--dry-run does not run it'
+
+# ... and turned off wholesale by the switch.
+DEVENV_EXTREPO_POST=0 extrepo_run_post withpost
+assert_no_file "$checkout/post-ran" 'DEVENV_EXTREPO_POST=0 does not run it'
+
+# No checkout means no post: a GitHub outage earlier in the sync must not leave a
+# stale installer running against a directory that was never updated.
+extrepo nodest url=https://example.com/x.git dest="$sandbox/not-there" post='./installer.sh'
+assert_ok 'a missing checkout skips its post=' extrepo_run_post nodest
+
+# An entry with no post= at all is a silent no-op.
+extrepo nopost url=https://example.com/x.git dest="$checkout"
+assert_ok 'an entry without post= is a no-op' extrepo_run_post nopost
 
 t_summary
