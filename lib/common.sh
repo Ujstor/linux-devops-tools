@@ -111,14 +111,27 @@ devenv_tmpfile() { mktemp "$DEVENV_RUNDIR/f.XXXXXXXX"; }
 # question that matters is "does execve() work on a file I just wrote here", so
 # that is the question this asks.
 #
-# Candidates, in order; the first one that passes the probe wins:
+# Candidates, in order; the first one that passes BOTH probes wins:
 #
-#     $TMPDIR  ->  /tmp  ->  $XDG_RUNTIME_DIR  ->  $DEVENV_CACHE/exec
-#              ->  $HOME/.cache/devops-env/exec
+#     $TMPDIR  ->  /tmp  ->  $DEVENV_CACHE/exec
+#              ->  $HOME/.cache/devops-env/exec  ->  $XDG_RUNTIME_DIR
 #
-# The last two are under $HOME on purpose: they are the fallback for the host
-# where every shared temp filesystem is noexec, and the EXIT trap removes them
-# again (including the parent it had to create), so the fingerprint stays clean.
+# The two $HOME entries sit AHEAD of $XDG_RUNTIME_DIR on purpose, and enforcing
+# that is what the second probe is for. A runtime dir passes the exec probe, but
+# it is a tmpfs sized against RAM (10% of it under stock systemd), so a build
+# placed there both runs out of room and eats the memory the compiler needs —
+# and both callers of this are source builds: 50-editors runs neovim's
+# ./configure, 21-lang-rust runs `cargo install`. On a 1 GiB guest whose
+# /run/user/1000 is 94 MiB, choosing it turned a correctly-handled noexec /tmp
+# into an OOM-killed rustc, "signal: 9, SIGKILL" partway through the crate graph.
+#
+# $HOME is disk-backed and is the honest place for a multi-hundred-MiB build
+# tree; $XDG_RUNTIME_DIR stays last as a genuine last resort, for the host where
+# $HOME is mounted noexec too. A candidate that executes but is too cramped is
+# held aside and used ONLY if nothing roomier answers, and it says so out loud —
+# silently building in 94 MiB of RAM is the failure this avoids. The EXIT trap
+# removes whatever was created (including the parent it had to make), so the
+# fingerprint stays clean.
 
 # _devenv_exec_probe DIR   (private)
 #   Returns 0 when a file created in DIR can be made executable AND executed.
@@ -145,6 +158,25 @@ _devenv_exec_probe() {
   "$probe" >/dev/null 2>&1 || rc=$?
   rm -f -- "$probe" 2>/dev/null
   [ "$rc" -eq 41 ]
+}
+
+# Free space a source build actually needs. Neovim's build tree and cargo's
+# target tree for tree-sitter-cli both run to a few hundred MiB. 1 GiB is the
+# floor that separates a real scratch filesystem from a runtime tmpfs — a
+# preference between candidates, never a reservation.
+DEVENV_EXEC_MIN_KIB=${DEVENV_EXEC_MIN_KIB:-1048576}
+
+# _devenv_exec_space_ok DIR   (private)
+#   Returns 0 when DIR's filesystem has at least $DEVENV_EXEC_MIN_KIB free.
+#   `df -Pk` is the portable spelling; -P keeps one line per filesystem even when
+#   the device name is long. An unreadable df counts as roomy on purpose: this
+#   ranks candidates, and must never be the thing that leaves a host with no
+#   scratch at all.
+_devenv_exec_space_ok() {
+  local dir=${1-} avail
+  avail=$(df -Pk -- "$dir" 2>/dev/null | awk 'NR==2 {print $4}') || return 0
+  [ -n "$avail" ] || return 0
+  [ "$avail" -ge "$DEVENV_EXEC_MIN_KIB" ]
 }
 
 # _devenv_execroot   (private)
@@ -182,10 +214,11 @@ _devenv_execroot() {
   # An array, not a " $tried " string: `case " $tried " in *" $c "*)` reads a path
   # containing a space as two candidates, and would then skip a perfectly good
   # directory because an unrelated one shared a word with it.
-  local cand root='' s dup
+  local cand root='' cramped='' s dup
   local -a tried=()
-  for cand in "${TMPDIR:-}" /tmp "${XDG_RUNTIME_DIR:-}" \
-    "${DEVENV_CACHE:-$HOME/.cache/devops-env}/exec" "$HOME/.cache/devops-env/exec"; do
+  for cand in "${TMPDIR:-}" /tmp \
+    "${DEVENV_CACHE:-$HOME/.cache/devops-env}/exec" "$HOME/.cache/devops-env/exec" \
+    "${XDG_RUNTIME_DIR:-}"; do
     [ -n "$cand" ] || continue
     cand=${cand%/}
     [ -n "$cand" ] || continue
@@ -209,10 +242,33 @@ _devenv_execroot() {
     # Probe the directory we will actually hand out, not its parent — that is
     # also what keeps the probe's predictable file name out of world-writable
     # /tmp, where it would be a symlink target.
-    _devenv_exec_probe "$root" && break
-    rm -rf -- "$root"
+    if ! _devenv_exec_probe "$root"; then
+      rm -rf -- "$root"
+      root=''
+      continue
+    fi
+    # It executes. Is there room to build in it? A cramped root beats no root,
+    # but only once every roomier candidate has been tried — so hold the first
+    # one aside and keep looking.
+    _devenv_exec_space_ok "$root" && break
+    if [ -n "$cramped" ]; then
+      rm -rf -- "$root"
+    else
+      cramped=$root
+    fi
     root=''
   done
+  if [ -z "$root" ] && [ -n "$cramped" ]; then
+    root=$cramped
+    cramped=''
+    log_warn "exec scratch $root has under $((DEVENV_EXEC_MIN_KIB / 1024)) MiB free."
+    log_warn "  it is the only exec-capable directory on this host; a source build may"
+    log_warn "  run out of room, and on a tmpfs it competes with the compiler for RAM."
+  fi
+  if [ -n "$cramped" ]; then
+    rm -rf -- "$cramped"
+    cramped=''
+  fi
   if [ -z "$root" ]; then
     log_error "no exec-capable scratch directory is available on this host."
     log_error "  tried: ${tried[*]:-(nothing)}"
