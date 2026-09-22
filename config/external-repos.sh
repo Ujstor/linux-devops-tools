@@ -67,14 +67,16 @@ extrepo nvim-config \
 # is that FILE inside the checkout, not the directory.
 #
 # post= installs TPM, clones every plugin the config lists, and puts ~/tmux.sh in
-# place. It finds ~/.tmux.conf already symlinked by the time it runs and says so
-# ("is a symlink … left alone"), which is the correct outcome and not an error.
+# place. --keep-config: ~/.tmux.conf is this list's business — the symlink
+# above, or a file of yours that it reports and leaves alone. A plain install.sh
+# replaced such a file with a copy (backed up, but no longer following the
+# checkout) straight after this repository had promised not to touch it.
 extrepo tmux-config \
   url=https://github.com/Ujstor/tmux-config.git \
   ref="${TMUX_CONFIG_REF:-master}" \
   link="$HOME/.tmux.conf" \
   link_src=.tmux.conf \
-  post='./install.sh' \
+  post='./install.sh --keep-config' \
   module=editors \
   desc='tmux configuration, TPM and its plugins'
 

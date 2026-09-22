@@ -148,7 +148,7 @@ The three shipped entries, and why each looks the way it does:
 | entry | ref pin | module | link | `post=` | on? |
 |---|---|---|---|---|---|
 | `nvim-config` | `NVIM_CONFIG_REF` | `editors` | `~/.config/nvim` → the **checkout** (`init.lua` is at the repository root) | — | yes |
-| `tmux-config` | `TMUX_CONFIG_REF` | `editors` | `~/.tmux.conf` → `.tmux.conf` **inside** the checkout | `./install.sh` | yes |
+| `tmux-config` | `TMUX_CONFIG_REF` | `editors` | `~/.tmux.conf` → `.tmux.conf` **inside** the checkout | `./install.sh --keep-config` | yes |
 | `mybash` | `MYBASH_REF` | `shell` | **none** — its own `setup.sh` links all three of its dotfiles | `./setup.sh --config-only` | yes |
 
 All three are on, so the one documented command installs all of them:
@@ -163,9 +163,10 @@ curl -fsSL https://raw.githubusercontent.com/Ujstor/linux-devops-tools/main/inst
   `~/.tmux/plugins/tpm`, so there is no catppuccin theme, no `tmux-resurrect` and — the one
   people actually notice — no `tmux-yank`, which is what binds `y` in copy mode. The config
   itself prints a yellow *"TPM is not installed"* bar to say so. `prefix + q` / `prefix + a`
-  also call `~/tmux.sh`, which nothing installed either. `post=./install.sh` puts TPM, every
-  plugin and `~/tmux.sh` in place. It finds `~/.tmux.conf` already symlinked and says so
-  (*"is a symlink … left alone"*) — that is the correct outcome, not an error.
+  also call `~/tmux.sh`, which nothing installed either. `post=./install.sh --keep-config` puts
+  TPM, every plugin and `~/tmux.sh` in place, and leaves `~/.tmux.conf` to this repository —
+  the symlink, or a file of yours that is reported and left alone. A plain `install.sh` replaced
+  such a file with a copy right after the sync promised not to touch it.
 * `mybash` was cloned but never activated, so its `.bashrc`, starship prompt and fastfetch
   config sat in `~/linuxtoolbox/mybash` doing nothing.
 
