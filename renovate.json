@@ -153,6 +153,14 @@
       "dependencyDashboardApproval": true
     },
     {
+      "description": "TREE_SITTER_VERSION is `# pin-policy: manual`: it must equal TREE_SITTER_VERSION in Ujstor/nvim-config's install.sh, which rebuilds the CLI with cargo whenever the one on PATH differs from its own pin. Bump both together. Surfaced on the dependency dashboard, never auto-PR'd.",
+      "matchDepNames": [
+        "tree-sitter/tree-sitter"
+      ],
+      "groupName": "tree-sitter (manual, must match nvim-config)",
+      "dependencyDashboardApproval": true
+    },
+    {
       "description": "yonahd/kor publishes the Helm CHART as kor-X.Y.Z in the same repository as the CLI's vX.Y.Z tags, and its releases/latest points at the chart. Restrict candidates to the CLI tag shape so a chart release can never be offered as a CLI bump.",
       "matchDepNames": [
         "yonahd/kor"

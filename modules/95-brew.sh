@@ -40,7 +40,9 @@ brew_new_home() {
     grpcurl) printf 'release .deb, or go install (kubernetes)\n' ;;
     yazi) printf 'release .deb (shell)\n' ;;
     resvg) printf 'apt where packaged, else skipped — never built (media)\n' ;;
-    tree-sitter-cli) printf 'DROPPED — only needed to author grammars\n' ;;
+    tree-sitter-cli)
+      printf 'release binary, or built with cargo where this glibc is too old for it (editors)\n'
+      ;;
     font-symbols-only-nerd-font)
       printf '%s/.local/share/fonts + fc-cache, or install it on Windows under WSL\n' "$HOME"
       ;;

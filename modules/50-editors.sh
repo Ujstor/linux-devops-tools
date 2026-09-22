@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # meta: name=editors
-# meta: desc=neovim from upstream, tmux, the tmux session saver and the external config repos
+# meta: desc=neovim from upstream, the tree-sitter cli, tmux, the tmux session saver and the external config repos
 # meta: profiles=devops,full
 # meta: os=any
 # meta: needs=
@@ -28,6 +28,10 @@
 # neovim always comes from upstream. bookworm ships 0.7.2 and noble 0.9.5; a
 # modern Lua config needs 0.10+, and the failure mode of a too-old nvim is a wall
 # of Lua stack traces on every start, not a clear message.
+#
+# The tree-sitter CLI is here because nvim-config cannot work without it — see
+# the tree-sitter section below for why it is sometimes BUILT rather than
+# downloaded.
 set -euo pipefail
 source "${DEVENV_HOME:?}/lib/common.sh"
 
@@ -127,6 +131,265 @@ install_neovim() {
   run_sudo tar -C "$NVIM_PREFIX" --strip-components=1 --no-same-owner -xzf "$ar" || return 1
   log_success "installed neovim $ver -> $NVIM_PREFIX/bin/nvim"
   changed "neovim $ver"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# tree-sitter CLI
+# ---------------------------------------------------------------------------
+#
+# nvim-config runs nvim-treesitter's `main` branch, which ships no parsers: it
+# COMPILES every one of them with the tree-sitter CLI. Without the CLI the config
+# starts with no syntax highlighting, and only says why inside nvim. The config's
+# own install.sh builds the CLI, but that installer is deliberately not run from
+# here (config/external-repos.sh says why), so the CLI is this module's job. It
+# lands beside nvim in /usr/local/bin, where root's nvim finds it too —
+# modules/52-root-configs.sh gives root the same config.
+#
+# WHICH BUILD IS PROBED, NOT ASSUMED. Upstream links its release binary against a
+# recent glibc — v0.26.3, v0.26.8 and v0.27.0 all need GLIBC_2.39 — so it runs on
+# trixie and noble and dies at load time on bookworm (2.36) and jammy (2.35):
+#     tree-sitter: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.39' not found
+# So the release binary is unpacked into an exec-capable scratch directory and RUN
+# there, and installed only when it answers with the pinned version. Where it
+# cannot run, the same version is built from crates.io with cargo, which links it
+# against this host's own glibc — the reason nvim-config's installer builds it
+# too. That costs a few minutes of CPU once; the version gate makes every later
+# run free.
+
+TS_REPO=tree-sitter/tree-sitter
+
+# ts_asset — upstream's own arch spelling, which matches no {token}: x64 for
+# amd64, arm64 for arm64. Returns 1 anywhere else; the cargo build still covers an
+# architecture that has no release binary.
+ts_asset() {
+  case ${OS_ARCH_DPKG:-} in
+    amd64) printf 'tree-sitter-cli-linux-x64.zip\n' ;;
+    arm64) printf 'tree-sitter-cli-linux-arm64.zip\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# ts_version_of BIN — prints the version BIN reports (`tree-sitter 0.26.8` ->
+# 0.26.8). Returns 1 when BIN is missing, cannot run, or prints no version.
+# Read-only — it writes nothing under $HOME either — so it is safe under --dry-run.
+ts_version_of() {
+  local bin=${1:?ts_version_of: BIN required} out=''
+  [ -x "$bin" ] || return 1
+  out=$("$bin" --version 2>/dev/null) || return 1
+  [[ $out =~ ([0-9]+\.[0-9]+\.[0-9]+) ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+# ts_place SRC DEST — installs SRC as DEST/tree-sitter. Into the system prefix it
+# is ALWAYS installed as root, never merely because the directory happens to be
+# writable: that is how a /usr/local/bin left owned by another uid would end up
+# holding a user-owned binary that root's nvim runs. `install` unlinks the target
+# first, so the symlink into ~/.cargo/bin that nvim-config's installer leaves in
+# /usr/local/bin is replaced, never written through.
+ts_place() {
+  local src=$1 dest=$2
+  if [ "$dest" = "$NVIM_PREFIX/bin" ]; then
+    run_sudo install -m 0755 -- "$src" "$dest/tree-sitter"
+  else
+    run install -m 0755 -- "$src" "$dest/tree-sitter"
+  fi
+}
+
+# ts_install_release TAG DEST
+#   The upstream release binary, if it runs here: fetched into the download cache,
+#   unpacked into devenv_execdir, RUN there, and installed to DEST only when it
+#   reports the pinned version. Returns 1, having said why, whenever the cargo
+#   build should be tried instead — no asset for this architecture, or a binary
+#   this glibc cannot load. Not for --dry-run.
+ts_install_release() {
+  local tag=$1 dest=$2 ver asset url ar work out got
+  ver=$(tag_to_version "$tag")
+  asset=$(ts_asset) || {
+    log_info "tree-sitter publishes no release binary for ${OS_ARCH_DPKG:-this architecture}"
+    return 1
+  }
+  have unzip || {
+    log_info "unzip is not installed, so the tree-sitter release zip cannot be unpacked"
+    return 1
+  }
+  url="https://github.com/$TS_REPO/releases/download/$tag/$asset"
+
+  # The asset name carries no version, so the cached copy's name has to: a pin
+  # bump must never unpack the previous release out of the cache — the trap that
+  # _iac_tflint in modules/40-iac.sh has to work around for tflint.
+  ensure_dir "${DEVENV_CACHE:?}/dl" || return 1
+  ar="$DEVENV_CACHE/dl/tree-sitter-$ver-$asset"
+  if [ ! -f "$ar" ]; then
+    if ! http_ok "$url"; then
+      log_info "tree-sitter $tag has no asset $asset"
+      return 1
+    fi
+    download "$url" "$ar" || return 1
+  fi
+
+  # devenv_execdir, NOT devenv_tmpdir: the binary is executed right here, and /tmp
+  # is mounted noexec on every hardened host.
+  work=$(devenv_execdir) || return 1
+  run unzip -q -o "$ar" -d "$work" || return 1
+  if [ ! -f "$work/tree-sitter" ]; then
+    log_warn "$asset has no tree-sitter binary at its top level"
+    return 1
+  fi
+  run chmod 0755 "$work/tree-sitter" || return 1
+  if ! out=$("$work/tree-sitter" --version 2>&1); then
+    log_info "the tree-sitter $ver release binary does not run on this host:"
+    log_info "  ${out%%$'\n'*}"
+    return 1
+  fi
+  got=$(ts_version_of "$work/tree-sitter") || got=''
+  if [ "$got" != "$ver" ]; then
+    log_warn "$asset from $tag reports version '${got:-none}', not $ver"
+    return 1
+  fi
+  # Verified for v0.26.8: the release holds the binaries and no checksum file.
+  # GitHub keeps a digest per asset, but only behind api.github.com, which nothing
+  # in this repository calls.
+  log_warn "installing tree-sitter $ver WITHOUT a checksum: tree-sitter publishes no checksum asset."
+  log_warn "  source: $url"
+  ts_place "$work/tree-sitter" "$dest" || return 1
+  log_success "installed tree-sitter $ver (release binary) -> $dest/tree-sitter"
+  changed "tree-sitter $ver"
+  return 0
+}
+
+# ts_have_libclang — 0 when a libclang shared object is installed. bindgen
+# dlopen()s it while BUILDING rquickjs-sys, a dependency of tree-sitter-cli 0.26,
+# and without it the build dies minutes in with "Unable to find libclang".
+# libclang-cpp is a different library and deliberately does not match.
+ts_have_libclang() {
+  local f
+  for f in /usr/lib/llvm-*/lib/libclang.so* /usr/lib/*/libclang.so* /usr/lib/*/libclang-[0-9]*.so*; do
+    [ -e "$f" ] && return 0
+  done
+  return 1
+}
+
+# ts_cargo — prints the cargo to build with, or returns 1. rustup's proxy comes
+# first: modules/21-lang-rust.sh may have installed it earlier in THIS run, after
+# the invoking shell computed PATH, so `have cargo` alone would miss it.
+ts_cargo() {
+  local c="${CARGO_HOME:-$HOME/.cargo}/bin/cargo"
+  if [ -x "$c" ]; then
+    printf '%s\n' "$c"
+    return 0
+  fi
+  command -v cargo 2>/dev/null
+}
+
+# ts_install_cargo VERSION DEST
+#   `cargo install --locked tree-sitter-cli --version VERSION`, built entirely
+#   inside devenv_execdir and then installed to DEST. --root keeps the result out
+#   of ~/.cargo/bin, which precedes /usr/local/bin on PATH and is not on root's
+#   PATH at all. The build executes the build scripts it compiles, so
+#   CARGO_TARGET_DIR pins the build tree into the exec scratch, and TMPDIR follows
+#   it for whatever else cargo puts in the temp dir — which cargo versions differ
+#   on. The build dependencies are the list nvim-config's installer uses,
+#   installed only on this path. Returns 1, having said why, when nothing could be
+#   built. Not for --dry-run.
+ts_install_cargo() {
+  local ver=$1 dest=$2 cargo work got
+  cargo=$(ts_cargo) || {
+    log_warn "the tree-sitter CLI has to be built here and there is no cargo to build it with."
+    log_warn "  install rust first:  devenv --only lang-rust   then re-run:  devenv --only editors"
+    return 1
+  }
+  if have_root; then
+    pkg_install build-essential pkg-config libssl-dev clang libclang-dev \
+      || log_warn "not every tree-sitter build dependency could be installed; trying the build anyway"
+  fi
+  # Checked rather than hoped for: without root nothing above ran, and a build
+  # that cannot link would fail minutes in on EVERY run instead of once, here.
+  if ! have cc || ! ts_have_libclang; then
+    log_warn "building tree-sitter-cli needs a C compiler and libclang, and this box lacks one."
+    log_warn "  as root:  apt-get install build-essential clang libclang-dev   then re-run this module"
+    return 1
+  fi
+  work=$(devenv_execdir) || return 1
+  log_info "building tree-sitter-cli $ver with cargo — a few minutes, once"
+  run env TMPDIR="$work" CARGO_TARGET_DIR="$work/target" \
+    "$cargo" install --locked --root "$work/root" tree-sitter-cli --version "$ver" || {
+    log_warn "cargo could not build tree-sitter-cli $ver"
+    return 1
+  }
+  got=$(ts_version_of "$work/root/bin/tree-sitter") || got=''
+  if [ "$got" != "$ver" ]; then
+    log_warn "the tree-sitter cargo just built reports version '${got:-none}', not $ver"
+    return 1
+  fi
+  ts_place "$work/root/bin/tree-sitter" "$dest" || return 1
+  log_success "installed tree-sitter $ver (built with cargo) -> $dest/tree-sitter"
+  changed "tree-sitter $ver"
+  return 0
+}
+
+# ts_report_shadow DEST VERSION
+#   ~/.bashrc.d/10-path.sh puts ~/.local/bin and then ~/.cargo/bin AHEAD of
+#   /usr/local/bin, so a tree-sitter in either one is the one nvim actually runs.
+#   Reported when it is not the pinned version, never removed (MUST-FIX S9) — it
+#   is most likely an earlier nvim-config install.sh's cargo build. Returns 0.
+ts_report_shadow() {
+  local dest=$1 ver=$2 p v cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+  # In PATH order: once the loop reaches DEST, everything after it comes later on
+  # PATH and shadows nothing.
+  for p in "$HOME/.local/bin/tree-sitter" "$cargo_bin/tree-sitter"; do
+    [ "$p" != "$dest/tree-sitter" ] || break
+    [ -x "$p" ] || continue
+    v=$(ts_version_of "$p") || v=''
+    [ "$v" != "$ver" ] || continue
+    log_warn "$p (${v:-version unknown}) comes before $dest/tree-sitter on PATH, so nvim runs it, not $ver."
+    case $p in
+      "$cargo_bin"/*) log_warn "  it is a cargo install; to drop it:  cargo uninstall tree-sitter-cli" ;;
+      *) log_warn "  remove it, or replace it with $ver" ;;
+    esac
+  done
+  return 0
+}
+
+# install_tree_sitter
+#   The CLI nvim-treesitter's `main` branch compiles every parser with, pinned by
+#   TREE_SITTER_VERSION. Gated on the version of the file this module writes, so
+#   a converged box costs one `tree-sitter --version` and no network. A failure
+#   warns and returns 0: neovim and the config still install, without parsers
+#   until a later run succeeds.
+install_tree_sitter() {
+  local tag ver dest cur=''
+  tag=$(gh_resolve_version "$TS_REPO" "${TREE_SITTER_VERSION:?}") || {
+    log_warn "could not resolve a tree-sitter release for '${TREE_SITTER_VERSION:-}'"
+    return 0
+  }
+  ver=$(tag_to_version "$tag")
+  if have_root; then
+    dest=$NVIM_PREFIX/bin
+  else
+    dest=$HOME/.local/bin
+  fi
+
+  cur=$(ts_version_of "$dest/tree-sitter") || cur=''
+  if [ "$cur" = "$ver" ]; then
+    log_skip "tree-sitter is already $ver ($dest/tree-sitter)"
+    ts_report_shadow "$dest" "$ver"
+    return 0
+  fi
+  if [ -n "$cur" ]; then log_info "tree-sitter $cur -> $ver"; fi
+
+  if is_dry_run; then
+    log_dryrun "install tree-sitter $ver -> $dest/tree-sitter: the release binary where it runs on this glibc, else cargo install --locked tree-sitter-cli"
+    changed "tree-sitter $ver"
+    return 0
+  fi
+
+  ensure_dir "$dest" || return 0
+  if ! ts_install_release "$tag" "$dest" && ! ts_install_cargo "$ver" "$dest"; then
+    log_warn "no tree-sitter CLI was installed — nvim-treesitter cannot compile parsers until one is"
+    return 0
+  fi
+  ts_report_shadow "$dest" "$ver"
   return 0
 }
 
@@ -347,6 +610,7 @@ module_main() {
     "a distro neovim is installed as well as the upstream one in $NVIM_PREFIX/bin; 'command -v nvim' says which wins" \
     neovim || true
 
+  install_tree_sitter
   install_tmux
   install_external_configs
   install_tmux_session_saver

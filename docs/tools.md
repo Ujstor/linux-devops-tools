@@ -62,6 +62,7 @@ so explicitly and give a reason — there is a policy test for it.
 | git-delta | a/r ≥ 0.16 | `DELTA_VERSION` | `git` | dev | absent from bookworm |
 | gh | apt-v | — | `git`, `cloud` | min | the suite is literally `stable`, so the source line is identical on both distributions |
 | neovim | rel | `NEOVIM_VERSION` | `editors` | dev | always upstream: bookworm has 0.7.2 and noble 0.9.5, both too old for a modern Lua config |
+| tree-sitter CLI | rel, else `cargo` | `TREE_SITTER_VERSION` | `editors` | dev | nvim-treesitter's `main` branch compiles every parser with it. The release binary needs glibc 2.39, so it is **run before it is installed**: on bookworm and jammy it cannot load, and the same pin is built with `cargo install --locked` instead (needs `lang-rust`; `clang`/`libclang-dev` are installed for that build only). Kept equal to nvim-config's own pin |
 | tmux | apt (or source with `TMUX_FROM_SOURCE=1`) | — | `editors` | dev | |
 | `tmux-save-session.sh` | vendored script | — | `editors` | dev | installed to `~/.tmux-sessions/`, mode 0755. Only the script is vendored — its own repository holds generated session files, which are personal data. See below |
 | `nvim-config`, `tmux-config` | git clone + symlink | `NVIM_CONFIG_REF`, `TMUX_CONFIG_REF` | `editors` | dev | entries in the [external config repo list](configuration.md#external-config-repos). Cloned and symlinked, **never** curl-piped, never updated over a dirty worktree, and never placed over a file of yours |
@@ -280,7 +281,7 @@ nothing unless `INSTALL_HOMEBREW=1`, and it refuses on a glibc older than 2.39 w
 | grpcurl | release binary (`GRPCURL_VERSION`) |
 | yazi | release `.deb` |
 | resvg | apt where it exists, otherwise skipped |
-| tree-sitter, tree-sitter-cli | dropped — `nvim-treesitter` compiles parsers with `cc`; the CLI is for authoring grammars |
+| tree-sitter-cli | the `editors` module: the release binary, or built with cargo where this glibc is too old for it |
 | `font-symbols-only-nerd-font` | `~/.local/share/fonts` + `fc-cache`, and only on a non-WSL, non-headless box |
 
 ## Deliberately not installed

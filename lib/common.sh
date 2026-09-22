@@ -120,8 +120,9 @@ devenv_tmpfile() { mktemp "$DEVENV_RUNDIR/f.XXXXXXXX"; }
 # that is what the second probe is for. A runtime dir passes the exec probe, but
 # it is a tmpfs sized against RAM (10% of it under stock systemd), so a build
 # placed there both runs out of room and eats the memory the compiler needs —
-# and both callers of this are source builds: 50-editors runs neovim's
-# ./configure, 21-lang-rust runs `cargo install`. On a 1 GiB guest whose
+# and two callers of this are source builds: 50-editors runs tmux's ./configure
+# (TMUX_FROM_SOURCE=1) and, where tree-sitter's release binary cannot run on the
+# host's glibc, `cargo install tree-sitter-cli`. On a 1 GiB guest whose
 # /run/user/1000 is 94 MiB, choosing it turned a correctly-handled noexec /tmp
 # into an OOM-killed rustc, "signal: 9, SIGKILL" partway through the crate graph.
 #
@@ -160,8 +161,8 @@ _devenv_exec_probe() {
   [ "$rc" -eq 41 ]
 }
 
-# Free space a source build actually needs. Neovim's build tree and cargo's
-# target tree for tree-sitter-cli both run to a few hundred MiB. 1 GiB is the
+# Free space a source build actually needs. cargo's target tree for
+# tree-sitter-cli runs to a few hundred MiB. 1 GiB is the
 # floor that separates a real scratch filesystem from a runtime tmpfs — a
 # preference between candidates, never a reservation.
 DEVENV_EXEC_MIN_KIB=${DEVENV_EXEC_MIN_KIB:-1048576}

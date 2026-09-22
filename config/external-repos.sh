@@ -52,8 +52,9 @@
 #
 # No post=, deliberately. Its install.sh installs a PINNED neovim into /usr/local
 # and bootstraps rustup to build the tree-sitter CLI; modules/50-editors.sh already
-# installs neovim from upstream, and lazy.nvim bootstraps its own plugins on the
-# first launch. The symlink really is the whole install for this one.
+# installs both — neovim from upstream, the tree-sitter CLI at the same pin
+# (TREE_SITTER_VERSION) — and lazy.nvim bootstraps its own plugins on the first
+# launch. The symlink really is the whole install for this one.
 extrepo nvim-config \
   url=https://github.com/Ujstor/nvim-config.git \
   ref="${NVIM_CONFIG_REF:-master}" \
