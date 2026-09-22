@@ -74,7 +74,8 @@ esac
 sync_repo() {
   local url=$1 dir=$2 ref=$3
   if [ -d "$dir/.git" ]; then
-    if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+    # GIT_OPTIONAL_LOCKS=0: see lib/fs.sh devenv_sync_repo — status must not rewrite the index.
+    if [ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$dir" status --porcelain 2>/dev/null)" ]; then
       warn "$dir has local modifications — left as it is"
       return 0
     fi

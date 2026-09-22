@@ -668,7 +668,11 @@ devenv_sync_repo() {
     changed "cloned $url -> $dir"
     return 0
   fi
-  if ! is_dry_run && [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+  # GIT_OPTIONAL_LOCKS=0: a question, not a write. Without it `git status`
+  # refreshes the index as a side effect — the first status after a fresh clone
+  # rewrote .git/index, so the SECOND install on a new box changed a file in every
+  # checkout it had just made.
+  if ! is_dry_run && [ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$dir" status --porcelain 2>/dev/null)" ]; then
     log_warn "$dir has uncommitted changes — not updating it"
     return 0
   fi

@@ -625,7 +625,7 @@ checkout_kind() {
 
 update_git_checkout() {
   local before after
-  if [ -n "$(git -C "$DEVENV_HOME" status --porcelain 2>/dev/null)" ]; then
+  if [ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$DEVENV_HOME" status --porcelain 2>/dev/null)" ]; then
     if [ "${DEVENV_FORCE_UPDATE:-0}" != 1 ]; then
       log_warn "$DEVENV_HOME has local modifications — not touching them."
       log_warn "Re-run with --force-update to overwrite tracked files with $DEVENV_REF."

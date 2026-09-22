@@ -254,7 +254,7 @@ starship_config() {
       local repo_dir
       repo_dir=$(dirname -- "$target")
       if git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 \
-        && [ -n "$(git -C "$repo_dir" status --porcelain 2>/dev/null)" ]; then
+        && [ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$repo_dir" status --porcelain 2>/dev/null)" ]; then
         log_warn "$repo_dir has uncommitted changes — refusing to patch $target"
         return 0
       fi
