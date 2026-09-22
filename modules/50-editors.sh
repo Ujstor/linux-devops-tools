@@ -117,7 +117,14 @@ install_neovim() {
   # The tarball is a self-contained prefix (bin/ lib/ share/), so
   # --strip-components=1 into /usr/local is upstream's own documented install.
   # Nothing under /usr/local is dpkg-owned, so no packaged file can be clobbered.
-  run_sudo tar -C "$NVIM_PREFIX" --strip-components=1 -xzf "$ar" || return 1
+  #
+  # --no-same-owner is load-bearing. tar running as root restores each entry's
+  # owner from the archive, and every entry in this one belongs to uid 1001 —
+  # GitHub's `runner` user, verified for v0.12.5 — including the bin/, lib/ and
+  # share/ directories themselves. Without the flag, /usr/local/bin, lib and share
+  # end up owned by uid 1001: whichever account holds that uid on this box (often
+  # the second human user) could then replace any binary root runs.
+  run_sudo tar -C "$NVIM_PREFIX" --strip-components=1 --no-same-owner -xzf "$ar" || return 1
   log_success "installed neovim $ver -> $NVIM_PREFIX/bin/nvim"
   changed "neovim $ver"
   return 0
