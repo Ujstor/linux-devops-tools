@@ -95,4 +95,36 @@ assert_fail 'verify_sha256 rejects a wrong digest' \
 assert_fail 'verify_sha256 fails on a missing file' \
   verify_sha256 "$T_SANDBOX/not-here" "$digest"
 
+t_section 'the download cache is keyed on the tag, not on the asset name alone'
+
+# k3d-linux-amd64 is the asset of EVERY k3d release. Cached under that name alone,
+# a pin bump would verify (or, unverified, install) the previous release.
+DEVENV_CACHE="$T_SANDBOX/cache"
+assert_eq "$T_SANDBOX/cache/dl/v5.9.0.k3d-linux-amd64" "$(net_cache_path v5.9.0 k3d-linux-amd64)" \
+  'a version-less asset is cached under its tag'
+assert_ne "$(net_cache_path v5.8.3 k3d-linux-amd64)" "$(net_cache_path v5.9.0 k3d-linux-amd64)" \
+  'two releases of one asset never share a cache file'
+assert_eq "$T_SANDBOX/cache/dl/kustomize_v5.8.1.kustomize_v5.8.1_linux_amd64.tar.gz" \
+  "$(net_cache_path kustomize/v5.8.1 kustomize_v5.8.1_linux_amd64.tar.gz)" \
+  'a component-prefixed tag cannot make a subdirectory'
+
+cache_dl="$DEVENV_CACHE/dl"
+mkdir -p "$cache_dl"
+keep=$(net_cache_path v5.9.0 k3d-linux-amd64)
+: >"$keep"
+: >"$cache_dl/v5.8.3.k3d-linux-amd64"
+: >"$cache_dl/k3d-linux-amd64"
+: >"$cache_dl/v5.9.0.kind-linux-amd64"
+: >"$cache_dl/v5.9.0.checksums.txt"
+
+DEVENV_DRY_RUN=1 net_cache_prune "$keep" k3d-linux-amd64 2>/dev/null
+assert_ok 'a dry run prunes nothing' test -f "$cache_dl/v5.8.3.k3d-linux-amd64"
+
+net_cache_prune "$keep" k3d-linux-amd64
+assert_ok 'the release just downloaded is kept' test -f "$keep"
+assert_fail 'an older release of the same asset is pruned' test -e "$cache_dl/v5.8.3.k3d-linux-amd64"
+assert_fail 'so is the version-less copy the old cache layout left' test -e "$cache_dl/k3d-linux-amd64"
+assert_ok 'another asset is left alone' test -f "$cache_dl/v5.9.0.kind-linux-amd64"
+assert_ok 'and so is a checksum file' test -f "$cache_dl/v5.9.0.checksums.txt"
+
 t_summary

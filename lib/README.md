@@ -42,7 +42,8 @@ Rules that hold in every library file:
   the entire library that exit, plus `require_arch`, which calls `skip` on purpose
   and says so in its contract.
 * **Logging goes to stderr.** stdout is reserved for machine-readable output:
-  `need_sudo`, `gh_latest_tag`, `comp_dir`, `print_plan`, `backup_file`, `repo_key`.
+  `need_sudo`, `gh_latest_tag`, `comp_dir`, `print_plan`, `backup_file`, `repo_key`,
+  `net_cache_path`.
 * **Every function carries a contract comment above it**: arguments, what it prints,
   what it returns, and what it does under `--dry-run`.
 * **Predicates return 1 for "no".** Call them inside `if`, `&&` or `||`, never as the

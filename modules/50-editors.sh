@@ -109,8 +109,14 @@ install_neovim() {
 
   dl="${DEVENV_CACHE:?}/dl"
   ensure_dir "$dl" || return 1
-  ar="$dl/$asset"
-  [ -f "$ar" ] || download "$url" "$ar" || return 1
+  # The tag is part of the cached name (lib/net.sh: net_cache_path): the asset is
+  # nvim-linux-x86_64.tar.gz in every release, so a name-only cache would unpack
+  # the previous neovim after a pin bump and report the new one.
+  ar=$(net_cache_path "$tag" "$asset")
+  if [ ! -f "$ar" ]; then
+    download "$url" "$ar" || return 1
+    net_cache_prune "$ar" "$asset"
+  fi
 
   # neovim publishes NO checksum asset — verified for v0.12.5: the release has
   # only the tarballs, appimages and .zsync files, and the sums live in the
@@ -215,17 +221,17 @@ ts_install_release() {
   }
   url="https://github.com/$TS_REPO/releases/download/$tag/$asset"
 
-  # The asset name carries no version, so the cached copy's name has to: a pin
-  # bump must never unpack the previous release out of the cache — the trap that
-  # _iac_tflint in modules/40-iac.sh has to work around for tflint.
+  # The asset name carries no version; net_cache_path adds the tag so a pin bump
+  # never unpacks the previous release out of the cache.
   ensure_dir "${DEVENV_CACHE:?}/dl" || return 1
-  ar="$DEVENV_CACHE/dl/tree-sitter-$ver-$asset"
+  ar=$(net_cache_path "$tag" "$asset")
   if [ ! -f "$ar" ]; then
     if ! http_ok "$url"; then
       log_info "tree-sitter $tag has no asset $asset"
       return 1
     fi
     download "$url" "$ar" || return 1
+    net_cache_prune "$ar" "$asset"
   fi
 
   # devenv_execdir, NOT devenv_tmpdir: the binary is executed right here, and /tmp
