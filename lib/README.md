@@ -105,8 +105,12 @@ Cannot execute /tmp/tmp.XXXXXXXXXX/rustup-init
 * It **probes** — writes a tiny script, `chmod +x`, runs it, checks the exit status.
   `mount` output and `/proc/mounts` are never parsed: bind mounts, overlays and user
   namespaces all make them lie about the directory you are actually holding.
-* Candidates, first to pass the probe wins:
-  `$TMPDIR` → `/tmp` → `$XDG_RUNTIME_DIR` → `$DEVENV_CACHE/exec` → `$HOME/.cache/devops-env/exec`.
+* Candidates, first to pass BOTH probes wins:
+  `$TMPDIR` → `/tmp` → `$DEVENV_CACHE/exec` → `$HOME/.cache/devops-env/exec` → `$XDG_RUNTIME_DIR`.
+  The second probe is free space (1 GiB, `DEVENV_EXEC_MIN_KIB`): a runtime dir executes but is a
+  tmpfs sized against RAM, so a source build there runs out of room and competes with its own
+  compiler for memory. A candidate that executes but is cramped is used only when nothing
+  roomier answers, and it says so.
 * When it falls off `/tmp` it says so **once**, at `log_info`, naming the directory it
   chose. A silent fallback is how "/tmp is noexec" stayed invisible for a year.
 * One root per run. The choice is recorded in `$DEVENV_RUNDIR/execroot`, not only in an

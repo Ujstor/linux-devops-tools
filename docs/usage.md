@@ -16,7 +16,7 @@ ln -s ~/.local/share/linux-devops-tools/bin/devenv ~/.local/bin/devenv
 |---|---|
 | `devenv` | run the resolved plan (the default is `install --profile devops`) |
 | `devenv list` | every module with its profiles and gates, **TSV on stdout** |
-| `devenv doctor [--fix]` | audit this machine; `--fix` repairs only what is safe |
+| `devenv doctor [--fix]` | audit this machine; `--fix` prints the repair plan — doctor itself never changes anything |
 | `devenv update` | fast-forward the checkout, then replay the last plan |
 | `devenv uninstall [--all]` | remove the shell integration and the files this repo owns |
 | `devenv shell install\|uninstall\|status` | just the `~/.bashrc` managed block |

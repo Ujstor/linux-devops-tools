@@ -41,7 +41,7 @@ Verified 2026-09-11 against `devenv list`.
 | 70 | `wsl` | min, dev, full | **wsl** | any | — | no | a no-op unless this really is WSL: `wslu`, the systemd question, the restart hint |
 | 80 | `private` | private | any | any | — | no | internal tooling from a private git forge. Every host comes from the environment; nothing internal is committed here |
 | 85 | `personal` | personal | any | any | — | no | the owner's own side-project CLIs, entirely env-driven |
-| 90 | `doctor` | dev, full | any | any | — | no | read-only audit of shell, apt sources, kubernetes, SSO and WSL; `--fix` repairs only what is safe |
+| 90 | `doctor` | dev, full | any | any | — | no | read-only audit of shell, PATH, `/usr/local` ownership, apt sources, kubernetes, SSO and WSL; `--fix` prints the repair plan and changes nothing |
 | 91 | `purge-desktop` | **none** | any | any | — | **yes** | report, and optionally remove, the compositor/browser/VNC residue an older provisioning left |
 | 92 | `migrate` | **none** | any | any | — | no | report what `wsl2-config` left behind. Changes nothing unless asked |
 | 95 | `brew` | full | any | any | — | no | audit-only: lists your Homebrew leaves and maps each to its apt/release equivalent |
@@ -90,7 +90,8 @@ personal and hand-made:
 | `git` | prints the diff between your `git config --global` and this repo's defaults, and keeps yours | `DEVENV_GIT_APPLY=1 devenv --only git` — still set-if-absent, and never `user.*`, `commit.gpgsign`, `credential.*`, an `includeIf` scheme or `http.sslVerify` |
 | `migrate` | reports `wsl2-config` residue | `DEVENV_MIGRATE_APPLY=1 devenv --only migrate` |
 
-`brew` and `doctor` never write at all unless you pass `INSTALL_HOMEBREW=1` / `--fix`.
+`brew` never writes unless you pass `INSTALL_HOMEBREW=1`, and `doctor` never writes at all: `--fix`
+only prints its repair plan, for you to run the commands you agree with.
 
 ## Adding one
 

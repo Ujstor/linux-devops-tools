@@ -181,7 +181,7 @@ devenv — install and maintain this machine's developer environment
 Commands (default: install)
   install                 run the resolved plan
   list                    print every module with its profiles and gates (stdout, TSV)
-  doctor [--fix]          audit this machine; --fix repairs what it safely can
+  doctor [--fix]          audit this machine; --fix prints the repair plan, doctor itself changes nothing
   update                  fast-forward the checkout, then re-run the last plan
   uninstall [--all]       remove the shell integration and the files this repo owns
   shell install           add the managed block to ~/.bashrc
@@ -207,7 +207,7 @@ Options
       --ref REF           git ref used by `update`             (default: main)
       --force-update      let `update` overwrite local modifications
       --no-update         let `update` skip the fetch and just re-run the plan
-      --fix               `doctor` only: repair instead of just reporting
+      --fix               `doctor` only: print the repair plan (the commands, not run)
       --all               `uninstall` only: also drop ~/.config, ~/.cache and state
   -v, --verbose  -q, --quiet  --no-color
   -h, --help     -V, --version
