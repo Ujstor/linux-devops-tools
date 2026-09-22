@@ -19,7 +19,7 @@ Verified 2026-09-11 against `devenv list`.
 |---|---|---|---|---|---|---|---|
 | 00 | `preflight` | min, dev, full, ci | any | any | — | no | check the distribution is supported, create `$DEVENV_CONFIG`/`$DEVENV_CACHE`/`$DEVENV_STATE`, migrate legacy apt sources, install the bootstrap package set — asking for root only if something is actually missing |
 | 05 | `base-packages` | min, dev, full, ci | any | any | — | **yes** | the one apt base list: build tools, network tools, `jq`, `ripgrep`, `fd`, `bat`, `tldr`, `bash-completion` |
-| 10 | `shell` | min, dev, full, ci | any | any | — | no | the `~/.bashrc` managed block, the `~/.bashrc.d/` fragments, prompt, lazy completion cache, `fzf`/`zoxide`/`eza`/`yazi`/`starship`, and the `shell` entries of the [external config repo list](configuration.md#external-config-repos) (`mybash`, off by default) |
+| 10 | `shell` | min, dev, full, ci | any | any | — | no | the `~/.bashrc` managed block, the `~/.bashrc.d/` fragments, prompt, lazy completion cache, `fzf`/`zoxide`/`eza`/`yazi`/`starship`, and the `shell` entries of the [external config repo list](configuration.md#external-config-repos) (`mybash`, on by default) |
 | 15 | `git` | min, dev, full, ci | any | amd64, arm64 | `git` | no | `~/.config/git/ignore`, `gh`, `git-delta`. Git config is **a plan by default** — see below |
 | 20 | `lang-go` | min, dev, full, ci | any | any | — | **yes** | the Go toolchain to `/usr/local/go` plus the pinned `go install` tools |
 | 21 | `lang-rust` | dev, full | any | any | — | no | `rustup`. Rust is kept as a language, not as a package manager |
