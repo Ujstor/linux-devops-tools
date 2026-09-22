@@ -419,9 +419,9 @@ apply_settings() {
 #   when the user has not already decided:
 #       full  ->  KREW_EXTRAS=1  INSTALL_PACKER=1  INSTALL_EXTRAS=1
 #       ai    ->  INSTALL_AI_AGENTS=1
-#   `ai` is the opt-in profile for the extra agent CLIs. Claude Code itself is a BASE
-#   install and ships in the default `devops` profile, so `INSTALL_AI_AGENTS` gates
-#   only the extras (opencode, crush).
+#   `ai` is the opt-in profile for the extra agent CLI. Claude Code and opencode are
+#   BASE installs and ship in the default `devops` profile, so `INSTALL_AI_AGENTS`
+#   gates only the extra (crush).
 apply_profile_gates() {
   # --only replaces the profile, so it replaces the profile's gates too: run one
   # module with the gates off unless the environment says otherwise.

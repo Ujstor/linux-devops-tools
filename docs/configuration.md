@@ -40,7 +40,7 @@ the environment always wins over a profile's default.
 | `INSTALL_PACKER=1` | Packer alongside Terraform |
 | `INSTALL_EXTRAS=1` | the optional apt extras |
 | `INSTALL_K8S_OPT=1` | `kor`, `kube-linter`, `kube-bench`, `nerdctl`, `kubeseal` |
-| `INSTALL_AI_AGENTS=1` | `opencode` and `crush`. Claude Code is a base install and is not gated |
+| `INSTALL_AI_AGENTS=1` | `crush`. Claude Code and opencode are base installs and are not gated |
 | `INSTALL_HOMEBREW=1` | actually install Homebrew instead of only auditing it (needs glibc ≥ 2.39) |
 | `TMUX_FROM_SOURCE=1` | build tmux instead of taking the apt one |
 | `ENABLE_NALA_ALIAS=1` | `alias apt='nala'` — an alias, never a function, and `sudo` is never redefined |

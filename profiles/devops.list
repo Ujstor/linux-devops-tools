@@ -1,8 +1,8 @@
 # profiles/devops.list — THE DEFAULT PROFILE.
 #
 # minimal + languages + containers + kubernetes + k9s + auth/SSO + IaC + cloud
-# CLIs + editors + doctor. Terminal-only by design: no desktop environment, no
-# compositor and no GUI browser is installed by any of these.
+# CLIs + editors + AI agents + doctor. Terminal-only by design: no desktop
+# environment, no compositor and no GUI browser is installed by any of these.
 #
 # Web logins (Keycloak OIDC, Azure, GitHub, GitLab, Argo CD, OpenBao) are handled
 # by `auth-sso`, which installs a URL-opening shim rather than a browser.
@@ -24,7 +24,7 @@ iac                       # 40 — terraform, tflint, terraform-docs, OpenBao
 cloud                     # 45 — gh, glab, azure-cli, hcloud, crane
 editors                   # 50 — neovim, the tree-sitter CLI, tmux, the external config repos
 root-configs              # 52 — the same nvim/tmux/bash config for root
-ai                        # 6x — Claude Code (base install, native installer)
+ai                        # 6x — Claude Code + opencode (base installs, vendor installers)
 wsl                       # 70 — no-op unless this really is WSL
 doctor                    # 90 — audit the result
 summary                   # 99 — what changed and what to do next

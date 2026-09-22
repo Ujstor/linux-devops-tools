@@ -415,7 +415,7 @@ check_path() {
   # old" bug. Report both paths; never remove anything.
   local cmd dupes=0
   local -a paths
-  for cmd in golangci-lint fzf jq rg fd bat nvim tree-sitter yq helm kubectl k9s starship; do
+  for cmd in golangci-lint fzf jq rg fd bat nvim tree-sitter yq helm kubectl k9s starship opencode; do
     # readlink -f first: /bin is a symlink to /usr/bin on every target, and two
     # names for one inode are not a duplicate installation.
     mapfile -t paths < <(

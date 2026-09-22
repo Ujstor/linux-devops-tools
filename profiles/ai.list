@@ -1,13 +1,13 @@
 # profiles/ai.list — the opt-in AI agent CLIs.
 #
-# Claude Code is NOT here: it is a BASE install and ships in the default `devops`
-# profile. This profile is for the extras — opencode and crush.
+# Claude Code and opencode are NOT here: both are BASE installs and ship in the
+# default `devops` profile. This profile is for the extra — crush.
 #
 # bin/devenv sets INSTALL_AI_AGENTS=1 for this profile (unless you already set it),
-# and the `ai` module installs the extras only when that gate is on. So:
+# and the `ai` module installs crush only when that gate is on. So:
 #
-#     devenv                      # Claude Code only
-#     devenv --profile ai         # the extras as well
+#     devenv                      # Claude Code and opencode
+#     devenv --profile ai         # crush as well
 #     INSTALL_AI_AGENTS=1 devenv  # same, as part of a full run
 
-ai                        # 6x — Claude Code + (gated) opencode, crush
+ai                        # 6x — Claude Code, opencode + (gated) crush

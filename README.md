@@ -52,10 +52,10 @@ A profile is a plain list of module names in `profiles/*.list`. Pick one with `-
 | profile | what you get |
 |---|---|
 | `minimal` | preflight, base packages, shell, git, Go, Python, WSL fixes, summary — a jump host where you only want the shell to feel right |
-| **`devops`** *(default)* | `minimal` + Rust, Node, containers, Kubernetes, the kubectl/krew roster, k9s config, auth/SSO, IaC, cloud CLIs, editors (with the tree-sitter CLI), Claude Code, doctor |
+| **`devops`** *(default)* | `minimal` + Rust, Node, containers, Kubernetes, the kubectl/krew roster, k9s config, auth/SSO, IaC, cloud CLIs, editors (with the tree-sitter CLI), Claude Code and opencode, doctor |
 | `full` | `devops` + repo-dev tooling, Yazi's preview stack, a Homebrew audit — and turns on `KREW_EXTRAS`, `INSTALL_PACKER`, `INSTALL_EXTRAS` |
 | `ci` | everything a container can actually do: dotfiles, apt repos, release binaries. No docker daemon, no systemd, no interactive login helpers |
-| `ai` | the opt-in AI agent CLIs (opencode, crush). Claude Code is **not** here — it is a base install in `devops` |
+| `ai` | the opt-in AI agent CLI (crush). Claude Code and opencode are **not** here — they are base installs in `devops` |
 | `private` | internal tooling from a private git forge, entirely env-driven. Silently skips when the variables are unset |
 | `personal` | the owner's own odds and ends |
 

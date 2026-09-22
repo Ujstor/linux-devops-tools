@@ -128,7 +128,7 @@
       "groupName": "shell and CLI tools"
     },
     {
-      "description": "AI agents and the Spec Kit ref, all opt-in profiles.",
+      "description": "AI agents and the Spec Kit ref. OPENCODE_VERSION is `latest` (its installer resolves the release), so this group only ever moves crush and Spec Kit.",
       "matchDepNames": [
         "anomalyco/opencode",
         "charmbracelet/crush",

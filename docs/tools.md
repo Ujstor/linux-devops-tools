@@ -250,11 +250,13 @@ Python CLIs are **always** `uv tool install`. Nothing in this repository moves, 
 | tool | method | pin | profile |
 |---|---|---|---|
 | Claude Code | the vendor's native installer | `CLAUDE_CODE_CHANNEL` | **base** — in `devops` and `full` |
-| opencode | vendor script | `OPENCODE_VERSION` | `ai` profile, or `INSTALL_AI_AGENTS=1` |
-| crush | rel | `CRUSH_VERSION` | `ai` profile, or `INSTALL_AI_AGENTS=1` |
+| opencode | the vendor's installer script | `OPENCODE_VERSION` | **base** — in `devops` and `full` |
+| crush | go | `CRUSH_VERSION` | `ai` profile, or `INSTALL_AI_AGENTS=1` |
 
-Claude Code is installed **if absent** and then left alone — it self-updates, and this repository
-never runs `claude update`. It is not installed through npm.
+Claude Code and opencode are installed **if absent** and then left alone — each has its own
+updater (`claude update`, `opencode upgrade`), and this repository never runs either. Neither is
+installed through npm. A failed install of either fails the `ai` module; the other is still
+attempted.
 
 ## Media, WSL, private, personal
 

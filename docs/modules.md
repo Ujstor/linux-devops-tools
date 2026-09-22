@@ -37,7 +37,7 @@ Verified 2026-09-11 against `devenv list`.
 | 52 | `root-configs` | dev, full | any | any | `git` | yes | The same nvim, tmux and bash configuration for **root**, so `sudo -i` is not a bare shell: every enabled entry of the [external config repo list](configuration.md#external-config-repos) cloned under `/root` and linked from root's dotfiles. `DEVENV_ROOT_CONFIGS=0` skips it |
 | 55 | `media` | full | any | any | — | **yes** | `ffmpeg`, ImageMagick, `poppler-utils`, 7-Zip — Yazi's preview stack, each independently useful on a server |
 | 58 | `headless-browser` | **none** | !container | amd64, arm64 | `npx` | **yes** | Playwright's system dependency set, delegated to `npx playwright install-deps`. No browser UI |
-| 65 | `ai` | dev, full, ai | any | any | — | no | **Claude Code** via its native installer (install-if-absent, never managed afterwards); `opencode` and `crush` when `INSTALL_AI_AGENTS=1` |
+| 65 | `ai` | dev, full, ai | any | any | — | no | **Claude Code** and **opencode** via their vendor installers (install-if-absent, never managed afterwards); `crush` when `INSTALL_AI_AGENTS=1` |
 | 70 | `wsl` | min, dev, full | **wsl** | any | — | no | a no-op unless this really is WSL: `wslu`, the systemd question, the restart hint |
 | 80 | `private` | private | any | any | — | no | internal tooling from a private git forge. Every host comes from the environment; nothing internal is committed here |
 | 85 | `personal` | personal | any | any | — | no | the owner's own side-project CLIs, entirely env-driven |
