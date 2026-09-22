@@ -128,11 +128,11 @@ report_mybash() {
   elif [ -e "$HOME/.bashrc.bak" ]; then
     log_warn "mybash is checked out at $dir but ~/.bashrc is still a regular file."
     log_warn "  A ~/.bashrc.bak exists, so its setup.sh has run before — re-run it to relink:"
-    log_warn "      (cd '$dir' && ./setup.sh)"
+    log_warn "      (cd '$dir' && ./setup.sh --config-only)"
   else
     log_info "mybash is checked out at $dir; ~/.bashrc is a regular file and was not replaced"
     log_info "  every ~/.bashrc.d fragment works either way — run its setup.sh to adopt it:"
-    log_info "      (cd '$dir' && ./setup.sh)"
+    log_info "      (cd '$dir' && ./setup.sh --config-only)"
   fi
   return 0
 }

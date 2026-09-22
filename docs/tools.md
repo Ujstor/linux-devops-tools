@@ -66,7 +66,7 @@ so explicitly and give a reason — there is a policy test for it.
 | tmux | apt (or source with `TMUX_FROM_SOURCE=1`) | — | `editors` | dev | |
 | `tmux-save-session.sh` | vendored script | — | `editors` | dev | installed to `~/.tmux-sessions/`, mode 0755. Only the script is vendored — its own repository holds generated session files, which are personal data. See below |
 | `nvim-config`, `tmux-config` | git clone + symlink | `NVIM_CONFIG_REF`, `TMUX_CONFIG_REF` | `editors` | dev | entries in the [external config repo list](configuration.md#external-config-repos). Cloned and symlinked, **never** curl-piped, never updated over a dirty worktree, and never placed over a file of yours |
-| `mybash` | git clone + its own `setup.sh` | `MYBASH_REF` | `shell` | min | the same list, **on by default since 2026-09-15**. Its `setup.sh` links `~/.bashrc`, the starship config and the fastfetch config, backing a real file up first. `DEVENV_EXTREPO_MYBASH=0` turns it off — see [configuration.md](configuration.md#external-config-repos) |
+| `mybash` | git clone + its own `setup.sh` | `MYBASH_REF` | `shell` | min | the same list, **on by default since 2026-09-15**. Its `setup.sh --config-only` links `~/.bashrc`, the starship config and the fastfetch config, backing up whatever it replaces; the tools themselves come from this repository, pinned. `DEVENV_EXTREPO_MYBASH=0` turns it off — see [configuration.md](configuration.md#external-config-repos) |
 
 ### External config repos
 
