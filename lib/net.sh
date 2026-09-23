@@ -302,6 +302,44 @@ expand_asset() {
 }
 
 # ---------------------------------------------------------------------------
+# The download cache
+# ---------------------------------------------------------------------------
+#
+# $DEVENV_CACHE/dl survives re-runs, so a second install of the same release is
+# offline. Every cached file is named after its release TAG as well as its asset,
+# because a lot of assets carry no version at all — k3d-linux-amd64,
+# k9s_linux_amd64.deb, yq_linux_amd64, nvim-linux-x86_64.tar.gz. A cache keyed on
+# the asset name alone hands a pin bump the PREVIOUS release: a checksum-verified
+# install then fails its digest on every run until someone empties the cache, and
+# an unverified one quietly reinstalls the old version and reports the new one.
+
+# net_cache_path TAG ASSET
+#   Prints $DEVENV_CACHE/dl/<TAG>.<ASSET>, with every `/` in TAG (the component
+#   prefix of kustomize/v5.8.1) made a `_`. Pure: creates nothing. Always 0.
+net_cache_path() {
+  local tag=${1:?net_cache_path: TAG required} asset=${2:?net_cache_path: ASSET required}
+  printf '%s/dl/%s.%s\n' "${DEVENV_CACHE:?DEVENV_CACHE unset}" "${tag//\//_}" "$asset"
+}
+
+# net_cache_prune KEEP ASSET
+#   Deletes every other cached release of ASSET — <any tag>.ASSET beside KEEP —
+#   and the version-less ASSET an older cache layout left there. Call it once KEEP
+#   has been downloaded: installs are version-gated, so an older release is never
+#   read again. Only regular files in KEEP's own directory are touched. Honours
+#   --dry-run through `run`. Always 0.
+net_cache_prune() {
+  local keep=${1:?net_cache_prune: KEEP required} asset=${2:?net_cache_prune: ASSET required}
+  local dir f
+  dir=$(dirname -- "$keep")
+  for f in "$dir/$asset" "$dir"/*."$asset"; do
+    [ "$f" != "$keep" ] || continue
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    run rm -f -- "$f" || true
+  done
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Installers
 # ---------------------------------------------------------------------------
 
@@ -423,12 +461,19 @@ gh_release_install() {
 
   local dl="${DEVENV_CACHE:?}/dl" ar
   ensure_dir "$dl" || return 1
-  ar="$dl/$asset"
-  [ -f "$ar" ] || download "$url" "$ar" || return 1
+  ar=$(net_cache_path "$tag" "$asset")
+  if [ ! -f "$ar" ]; then
+    download "$url" "$ar" || return 1
+    net_cache_prune "$ar" "$asset"
+  fi
 
-  # 2. checksum
+  # 2. checksum. A mismatch also drops the cached copy, so the next run downloads
+  # again instead of re-verifying the same bad file for ever.
   if [ -n "$sha" ]; then
-    verify_sha256 "$ar" "$sha" || return 1
+    verify_sha256 "$ar" "$sha" || {
+      run rm -f -- "$ar" || true
+      return 1
+    }
   elif [ -n "$csum_asset" ] || [ -n "$csum_url" ]; then
     local cfile curl_target expected
     if [ -z "$csum_url" ]; then
@@ -438,7 +483,7 @@ gh_release_install() {
       csum_asset=$(basename -- "$csum_url")
       curl_target=$(expand_asset "$csum_url" "$tag") || return 1
     fi
-    cfile="$dl/${tag//\//_}.$csum_asset"
+    cfile=$(net_cache_path "$tag" "$csum_asset")
     download "$curl_target" "$cfile" || {
       log_error "could not fetch the checksum file for $bin ($curl_target)"
       return 1
@@ -451,7 +496,10 @@ gh_release_install() {
       log_error "$asset is not listed in $csum_asset"
       return 1
     fi
-    verify_sha256 "$ar" "$expected" || return 1
+    verify_sha256 "$ar" "$expected" || {
+      run rm -f -- "$ar" || true
+      return 1
+    }
   elif [ "$no_verify" = 1 ]; then
     log_warn "installing $bin $ver WITHOUT a checksum: ${no_verify_reason:-no reason given at the call site}"
     log_warn "  source: $url"
@@ -616,11 +664,19 @@ deb_release_install() {
 
   local dl="${DEVENV_CACHE:?}/dl" ar
   ensure_dir "$dl" || return 1
-  ar="$dl/$asset"
-  [ -f "$ar" ] || download "$url" "$ar" || return 1
+  # Keyed on the tag as well, for the reason at net_cache_path: k9s's .deb, for
+  # one, is k9s_linux_<arch>.deb in every release.
+  ar=$(net_cache_path "$tag" "$asset")
+  if [ ! -f "$ar" ]; then
+    download "$url" "$ar" || return 1
+    net_cache_prune "$ar" "$asset"
+  fi
 
   if [ -n "$sha" ]; then
-    verify_sha256 "$ar" "$sha" || return 1
+    verify_sha256 "$ar" "$sha" || {
+      run rm -f -- "$ar" || true
+      return 1
+    }
   elif [ -n "$csum_asset" ] || [ -n "$csum_url" ]; then
     local cfile ctarget expected
     if [ -z "$csum_url" ]; then
@@ -630,13 +686,16 @@ deb_release_install() {
       ctarget=$(expand_asset "$csum_url" "$tag") || return 1
       csum_asset=$(basename -- "$ctarget")
     fi
-    cfile="$dl/${tag//\//_}.$csum_asset"
+    cfile=$(net_cache_path "$tag" "$csum_asset")
     download "$ctarget" "$cfile" || return 1
     expected=$(checksum_lookup "$cfile" "$asset") || {
       log_error "$asset is not listed in $csum_asset"
       return 1
     }
-    verify_sha256 "$ar" "$expected" || return 1
+    verify_sha256 "$ar" "$expected" || {
+      run rm -f -- "$ar" || true
+      return 1
+    }
   elif [ "$no_verify" = 1 ]; then
     log_warn "installing $pkg $ver WITHOUT a checksum: ${no_verify_reason:-no reason given at the call site}"
     log_warn "  source: $url"

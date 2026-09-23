@@ -157,31 +157,19 @@ _iac_terraform_docs() {
 }
 
 # _iac_tflint
-#   tflint ships a ZIP whose name carries NO version (tflint_linux_amd64.zip), so
-#   a copy of an older release can be sitting in the download cache under exactly
-#   the name this release wants. lib/net.sh reuses a cached asset by name, so the
-#   stale file would be checksum-verified against the NEW release's digest and
-#   the install would fail every time. Drop it first, and only when an install is
-#   actually going to happen — a converged box never reaches that branch.
-#   Always returns 0.
+#   tflint ships a ZIP whose name carries NO version (tflint_linux_amd64.zip).
+#   That used to need a workaround here — a stale copy of the previous release
+#   sat in the download cache under exactly this name and failed the new digest on
+#   every run — and no longer does: lib/net.sh keys the cache on the tag too
+#   (net_cache_path) and prunes older copies. Always returns 0.
 _iac_tflint() {
-  local rc=0 want cur asset cached
-  want=$(tag_to_version "${TFLINT_VERSION:?TFLINT_VERSION is not set}")
-  cur=$(bin_version tflint --version) || cur=''
-  if [ "${cur#v}" != "$want" ]; then
-    asset="tflint_linux_${OS_ARCH_GO:-amd64}.zip"
-    cached="${DEVENV_CACHE:?}/dl/$asset"
-    if [ -f "$cached" ]; then
-      log_debug "dropping the version-less cached asset $cached before installing $want"
-      run rm -f -- "$cached" || true
-    fi
-  fi
+  local rc=0
   if ! have unzip; then
     log_skip "tflint ships a .zip and unzip is not installed — run 'devenv --only base-packages'"
     return 0
   fi
   gh_release_install terraform-linters/tflint \
-    'tflint_{os}_{arch_go}.zip' tflint "$TFLINT_VERSION" \
+    'tflint_{os}_{arch_go}.zip' tflint "${TFLINT_VERSION:?TFLINT_VERSION is not set}" \
     --checksum-asset checksums.txt || rc=$?
   _iac_release_result tflint "$rc"
   return 0

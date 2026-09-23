@@ -19,7 +19,7 @@ Verified 2026-09-11 against `devenv list`.
 |---|---|---|---|---|---|---|---|
 | 00 | `preflight` | min, dev, full, ci | any | any | — | no | check the distribution is supported, create `$DEVENV_CONFIG`/`$DEVENV_CACHE`/`$DEVENV_STATE`, migrate legacy apt sources, install the bootstrap package set — asking for root only if something is actually missing |
 | 05 | `base-packages` | min, dev, full, ci | any | any | — | **yes** | the one apt base list: build tools, network tools, `jq`, `ripgrep`, `fd`, `bat`, `tldr`, `bash-completion` |
-| 10 | `shell` | min, dev, full, ci | any | any | — | no | the `~/.bashrc` managed block, the `~/.bashrc.d/` fragments, prompt, lazy completion cache, `fzf`/`zoxide`/`eza`/`yazi`/`starship`, and the `shell` entries of the [external config repo list](configuration.md#external-config-repos) (`mybash`, off by default) |
+| 10 | `shell` | min, dev, full, ci | any | any | — | no | the `~/.bashrc` managed block, the `~/.bashrc.d/` fragments, prompt, lazy completion cache, `fzf`/`zoxide`/`eza`/`yazi`/`starship`, and the `shell` entries of the [external config repo list](configuration.md#external-config-repos) (`mybash`, on by default) |
 | 15 | `git` | min, dev, full, ci | any | amd64, arm64 | `git` | no | `~/.config/git/ignore`, `gh`, `git-delta`. Git config is **a plan by default** — see below |
 | 20 | `lang-go` | min, dev, full, ci | any | any | — | **yes** | the Go toolchain to `/usr/local/go` plus the pinned `go install` tools |
 | 21 | `lang-rust` | dev, full | any | any | — | no | `rustup`. Rust is kept as a language, not as a package manager |
@@ -33,15 +33,15 @@ Verified 2026-09-11 against `devenv list`.
 | 38 | `auth-sso` | dev, full | any | amd64, arm64 | — | no | the `open-url` browser shim, `clip`/`clip-paste`, `sso-login`, `sso-kubeconfig-add`, `web`, and the config templates. **No browser, no new binaries** |
 | 40 | `iac` | dev, full, ci | any | amd64, arm64 | — | **yes** | `terraform`, `tflint`, `terraform-docs`, OpenBao's `bao`, and the Ansible/security Python CLIs |
 | 45 | `cloud` | dev, full, ci | any | amd64, arm64 | — | **yes** | `gh`, `glab`, `azure-cli`, `hcloud`, `crane`, Azure's `kubelogin` |
-| 50 | `editors` | dev, full | any | any | — | no | Neovim from upstream, `tmux`, `~/.tmux-sessions/tmux-save-session.sh`, and the `editors` entries of the [external config repo list](configuration.md#external-config-repos) — cloned and symlinked, never curl-piped |
+| 50 | `editors` | dev, full | any | any | — | no | Neovim from upstream, the tree-sitter CLI nvim-config compiles its parsers with (the release binary, or a cargo build of the same pin where this glibc is too old for it), `tmux`, `~/.tmux-sessions/tmux-save-session.sh`, and the `editors` entries of the [external config repo list](configuration.md#external-config-repos) — cloned and symlinked, never curl-piped |
 | 52 | `root-configs` | dev, full | any | any | `git` | yes | The same nvim, tmux and bash configuration for **root**, so `sudo -i` is not a bare shell: every enabled entry of the [external config repo list](configuration.md#external-config-repos) cloned under `/root` and linked from root's dotfiles. `DEVENV_ROOT_CONFIGS=0` skips it |
 | 55 | `media` | full | any | any | — | **yes** | `ffmpeg`, ImageMagick, `poppler-utils`, 7-Zip — Yazi's preview stack, each independently useful on a server |
 | 58 | `headless-browser` | **none** | !container | amd64, arm64 | `npx` | **yes** | Playwright's system dependency set, delegated to `npx playwright install-deps`. No browser UI |
-| 65 | `ai` | dev, full, ai | any | any | — | no | **Claude Code** via its native installer (install-if-absent, never managed afterwards); `opencode` and `crush` when `INSTALL_AI_AGENTS=1` |
+| 65 | `ai` | dev, full, ai | any | any | — | no | **Claude Code** and **opencode** via their vendor installers (install-if-absent, never managed afterwards); `crush` when `INSTALL_AI_AGENTS=1` |
 | 70 | `wsl` | min, dev, full | **wsl** | any | — | no | a no-op unless this really is WSL: `wslu`, the systemd question, the restart hint |
 | 80 | `private` | private | any | any | — | no | internal tooling from a private git forge. Every host comes from the environment; nothing internal is committed here |
 | 85 | `personal` | personal | any | any | — | no | the owner's own side-project CLIs, entirely env-driven |
-| 90 | `doctor` | dev, full | any | any | — | no | read-only audit of shell, apt sources, kubernetes, SSO and WSL; `--fix` repairs only what is safe |
+| 90 | `doctor` | dev, full | any | any | — | no | read-only audit of shell, PATH, `/usr/local` ownership, apt sources, kubernetes, SSO and WSL; `--fix` prints the repair plan and changes nothing |
 | 91 | `purge-desktop` | **none** | any | any | — | **yes** | report, and optionally remove, the compositor/browser/VNC residue an older provisioning left |
 | 92 | `migrate` | **none** | any | any | — | no | report what `wsl2-config` left behind. Changes nothing unless asked |
 | 95 | `brew` | full | any | any | — | no | audit-only: lists your Homebrew leaves and maps each to its apt/release equivalent |
@@ -90,7 +90,8 @@ personal and hand-made:
 | `git` | prints the diff between your `git config --global` and this repo's defaults, and keeps yours | `DEVENV_GIT_APPLY=1 devenv --only git` — still set-if-absent, and never `user.*`, `commit.gpgsign`, `credential.*`, an `includeIf` scheme or `http.sslVerify` |
 | `migrate` | reports `wsl2-config` residue | `DEVENV_MIGRATE_APPLY=1 devenv --only migrate` |
 
-`brew` and `doctor` never write at all unless you pass `INSTALL_HOMEBREW=1` / `--fix`.
+`brew` never writes unless you pass `INSTALL_HOMEBREW=1`, and `doctor` never writes at all: `--fix`
+only prints its repair plan, for you to run the commands you agree with.
 
 ## Adding one
 

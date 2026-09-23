@@ -42,7 +42,8 @@ Rules that hold in every library file:
   the entire library that exit, plus `require_arch`, which calls `skip` on purpose
   and says so in its contract.
 * **Logging goes to stderr.** stdout is reserved for machine-readable output:
-  `need_sudo`, `gh_latest_tag`, `comp_dir`, `print_plan`, `backup_file`, `repo_key`.
+  `need_sudo`, `gh_latest_tag`, `comp_dir`, `print_plan`, `backup_file`, `repo_key`,
+  `net_cache_path`.
 * **Every function carries a contract comment above it**: arguments, what it prints,
   what it returns, and what it does under `--dry-run`.
 * **Predicates return 1 for "no".** Call them inside `if`, `&&` or `||`, never as the
@@ -104,8 +105,12 @@ Cannot execute /tmp/tmp.XXXXXXXXXX/rustup-init
 * It **probes** — writes a tiny script, `chmod +x`, runs it, checks the exit status.
   `mount` output and `/proc/mounts` are never parsed: bind mounts, overlays and user
   namespaces all make them lie about the directory you are actually holding.
-* Candidates, first to pass the probe wins:
-  `$TMPDIR` → `/tmp` → `$XDG_RUNTIME_DIR` → `$DEVENV_CACHE/exec` → `$HOME/.cache/devops-env/exec`.
+* Candidates, first to pass BOTH probes wins:
+  `$TMPDIR` → `/tmp` → `$DEVENV_CACHE/exec` → `$HOME/.cache/devops-env/exec` → `$XDG_RUNTIME_DIR`.
+  The second probe is free space (1 GiB, `DEVENV_EXEC_MIN_KIB`): a runtime dir executes but is a
+  tmpfs sized against RAM, so a source build there runs out of room and competes with its own
+  compiler for memory. A candidate that executes but is cramped is used only when nothing
+  roomier answers, and it says so.
 * When it falls off `/tmp` it says so **once**, at `log_info`, naming the directory it
   chose. A silent fallback is how "/tmp is noexec" stayed invisible for a year.
 * One root per run. The choice is recorded in `$DEVENV_RUNDIR/execroot`, not only in an

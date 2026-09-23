@@ -132,14 +132,15 @@ devenv --profile devops
 
 # 4. Optional, and each one is a separate decision:
 DEVENV_MIGRATE_APPLY=1 devenv --only migrate   # neutralise the old leftovers
-devenv doctor --fix                            # repair what is safe to repair
+devenv doctor --fix                            # print the repair plan; run what you agree with
 devenv --only purge-desktop                    # remove the compositor/browser/VNC residue
 ```
 
 Nothing in step 2 changes anything at all. `migrate` is in no profile, so it never runs unless you
 ask for it, and without `DEVENV_MIGRATE_APPLY=1` it only prints what it found and the command that
-would deal with it. `doctor --fix` backs up every file it edits, honours `--dry-run`, and still
-refuses to remove a package without `--allow-pkg-remove`.
+would deal with it. `doctor --fix` edits nothing itself: it prints the commands, and the modules they
+call back up every file they edit, honour `--dry-run`, and still refuse to remove a package without
+`--allow-pkg-remove`.
 
 Run the module directly if you prefer that to an environment variable:
 
@@ -205,8 +206,8 @@ The new shell integration is **one** managed block:
 # <<< linux-devops-tools <<<
 ```
 
-The `migrate` module (and `devenv doctor --fix`) offers a one-time migration that **comments the old
-lines out** with a backup. It never deletes them, and it never uses `sed -i`.
+The `migrate` module offers a one-time migration (and `devenv doctor` prints the command) that
+**comments the old lines out** with a backup. It never deletes them, and it never uses `sed -i`.
 
 If `~/.bashrc` is a symlink (`mybash`), it stays a symlink: the block is written through the link so
 `mybash` keeps working, and you get a one-line diff you can upstream. `--adopt-bashrc` severs the
@@ -298,8 +299,8 @@ Two specific ones worth knowing about:
 `fix-repos.sh` used to patch one wrong Docker vendor path by hand. That check is now general: the
 doctor finds a URI configured in both a `.list` and a `.sources`, legacy `archive_uri-*.list` files
 left by `add-apt-repository`, a `docker` source pointing at the wrong distribution, a `Signed-By:`
-keyring that is missing or zero bytes, and a Kubernetes repository pinned to an EOL minor. `--fix`
-rewrites them through the same code the modules use.
+keyring that is missing or zero bytes, and a Kubernetes repository pinned to an EOL minor. Its repair
+plan names the module that owns each source, which rewrites it through the same code as an install.
 
 Every source this repository writes is deb822 (`.sources`) with an armored key in
 `/etc/apt/keyrings`. No `apt-key`, no dearmoring, no `gnupg` dependency.

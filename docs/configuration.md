@@ -40,7 +40,7 @@ the environment always wins over a profile's default.
 | `INSTALL_PACKER=1` | Packer alongside Terraform |
 | `INSTALL_EXTRAS=1` | the optional apt extras |
 | `INSTALL_K8S_OPT=1` | `kor`, `kube-linter`, `kube-bench`, `nerdctl`, `kubeseal` |
-| `INSTALL_AI_AGENTS=1` | `opencode` and `crush`. Claude Code is a base install and is not gated |
+| `INSTALL_AI_AGENTS=1` | `crush`. Claude Code and opencode are base installs and are not gated |
 | `INSTALL_HOMEBREW=1` | actually install Homebrew instead of only auditing it (needs glibc ≥ 2.39) |
 | `TMUX_FROM_SOURCE=1` | build tmux instead of taking the apt one |
 | `ENABLE_NALA_ALIAS=1` | `alias apt='nala'` — an alias, never a function, and `sudo` is never redefined |
@@ -148,8 +148,8 @@ The three shipped entries, and why each looks the way it does:
 | entry | ref pin | module | link | `post=` | on? |
 |---|---|---|---|---|---|
 | `nvim-config` | `NVIM_CONFIG_REF` | `editors` | `~/.config/nvim` → the **checkout** (`init.lua` is at the repository root) | — | yes |
-| `tmux-config` | `TMUX_CONFIG_REF` | `editors` | `~/.tmux.conf` → `.tmux.conf` **inside** the checkout | `./install.sh` | yes |
-| `mybash` | `MYBASH_REF` | `shell` | **none** — its own `setup.sh` links all three of its dotfiles | `./setup.sh` | yes |
+| `tmux-config` | `TMUX_CONFIG_REF` | `editors` | `~/.tmux.conf` → `.tmux.conf` **inside** the checkout | `./install.sh --keep-config` | yes |
+| `mybash` | `MYBASH_REF` | `shell` | **none** — its own `setup.sh` links all three of its dotfiles | `./setup.sh --config-only` | yes |
 
 All three are on, so the one documented command installs all of them:
 
@@ -163,16 +163,23 @@ curl -fsSL https://raw.githubusercontent.com/Ujstor/linux-devops-tools/main/inst
   `~/.tmux/plugins/tpm`, so there is no catppuccin theme, no `tmux-resurrect` and — the one
   people actually notice — no `tmux-yank`, which is what binds `y` in copy mode. The config
   itself prints a yellow *"TPM is not installed"* bar to say so. `prefix + q` / `prefix + a`
-  also call `~/tmux.sh`, which nothing installed either. `post=./install.sh` puts TPM, every
-  plugin and `~/tmux.sh` in place. It finds `~/.tmux.conf` already symlinked and says so
-  (*"is a symlink … left alone"*) — that is the correct outcome, not an error.
+  also call `~/tmux.sh`, which nothing installed either. `post=./install.sh --keep-config` puts
+  TPM, every plugin and `~/tmux.sh` in place, and leaves `~/.tmux.conf` to this repository —
+  the symlink, or a file of yours that is reported and left alone. A plain `install.sh` replaced
+  such a file with a copy right after the sync promised not to touch it.
 * `mybash` was cloned but never activated, so its `.bashrc`, starship prompt and fastfetch
   config sat in `~/linuxtoolbox/mybash` doing nothing.
 
 Running each repository's **own** installer, rather than a second copy of its logic here, keeps
 one source of truth per repository. This is **not** the `curl … | bash` that was ruled out: the
 repository is cloned first, the symlink is placed first, and only then is the script that is *in
-the checkout* run — and both installers refuse to replace a symlink they did not make.
+the checkout* run. Both back up whatever they replace; tmux-config's leaves a symlink it did not
+make alone, and mybash's records each backup so its `uninstall.sh` can put it back.
+
+mybash's runs as `setup.sh --config-only`: it links its dotfiles and installs nothing. Its plain
+`setup.sh` also installs starship, zoxide, fzf, eza and neovim — unpinned, from vendor scripts,
+into `~/.local/bin` — and it runs before this repository installs the pinned, verified copies, so
+those copies ended up shadowed, and a distro neovim landed next to the upstream one.
 
 **`mybash` ships on since 2026-09-15**, reversing the older decision. That decision read *"its
 `setup.sh` symlinks `~/.bashrc`, so running it where a `~/.bashrc` already exists is a data-loss

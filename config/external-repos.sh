@@ -39,8 +39,9 @@
 #                fastfetch config sat in ~/linuxtoolbox/mybash doing nothing.
 #
 # Both repositories already ship an idempotent installer that backs up whatever it
-# replaces and REFUSES to overwrite a symlink it did not make — so the post= step
-# runs THAT, rather than this repository growing a second, drifting copy of their
+# replaces — tmux-config's leaves a symlink it did not make alone, mybash's backs
+# that up too and records every backup for its uninstall — so the post= step runs
+# THAT, rather than this repository growing a second, drifting copy of their
 # install logic. One source of truth per repository.
 #
 # Turn every post= step off for a run with DEVENV_EXTREPO_POST=0; you keep the
@@ -52,8 +53,9 @@
 #
 # No post=, deliberately. Its install.sh installs a PINNED neovim into /usr/local
 # and bootstraps rustup to build the tree-sitter CLI; modules/50-editors.sh already
-# installs neovim from upstream, and lazy.nvim bootstraps its own plugins on the
-# first launch. The symlink really is the whole install for this one.
+# installs both — neovim from upstream, the tree-sitter CLI at the same pin
+# (TREE_SITTER_VERSION) — and lazy.nvim bootstraps its own plugins on the first
+# launch. The symlink really is the whole install for this one.
 extrepo nvim-config \
   url=https://github.com/Ujstor/nvim-config.git \
   ref="${NVIM_CONFIG_REF:-master}" \
@@ -65,14 +67,16 @@ extrepo nvim-config \
 # is that FILE inside the checkout, not the directory.
 #
 # post= installs TPM, clones every plugin the config lists, and puts ~/tmux.sh in
-# place. It finds ~/.tmux.conf already symlinked by the time it runs and says so
-# ("is a symlink … left alone"), which is the correct outcome and not an error.
+# place. --keep-config: ~/.tmux.conf is this list's business — the symlink
+# above, or a file of yours that it reports and leaves alone. A plain install.sh
+# replaced such a file with a copy (backed up, but no longer following the
+# checkout) straight after this repository had promised not to touch it.
 extrepo tmux-config \
   url=https://github.com/Ujstor/tmux-config.git \
   ref="${TMUX_CONFIG_REF:-master}" \
   link="$HOME/.tmux.conf" \
   link_src=.tmux.conf \
-  post='./install.sh' \
+  post='./install.sh --keep-config' \
   module=editors \
   desc='tmux configuration, TPM and its plugins'
 
@@ -87,6 +91,14 @@ extrepo tmux-config \
 # (~/.bashrc, ~/.config/starship.toml, ~/.config/fastfetch/config.jsonc) and this
 # list would only ever manage the first.
 #
+# post= is `setup.sh --config-only`: link the dotfiles, install nothing. A plain
+# setup.sh also installs its tools, and here that is wrong twice over — it runs
+# from the shell module, BEFORE this repository installs starship, zoxide, fzf and
+# eza (pinned, checksum-verified) and before modules/50-editors.sh installs
+# neovim, so it put unpinned copies from curl-piped vendor scripts into
+# ~/.local/bin — ahead of ours on PATH, which then also satisfied our version
+# gates — and pulled the distro neovim in next to the upstream one.
+#
 # Every ~/.bashrc.d fragment this repository ships still works with mybash and
 # without it, so nothing here depends on the entry being on. Turn it off with
 # DEVENV_EXTREPO_MYBASH=0 (or DEVENV_INSTALL_MYBASH=0, the older spelling).
@@ -94,7 +106,7 @@ extrepo mybash \
   url=https://github.com/Ujstor/mybash.git \
   ref="${MYBASH_REF:-main}" \
   dest="$HOME/linuxtoolbox/mybash" \
-  post='./setup.sh' \
+  post='./setup.sh --config-only' \
   module=shell \
   enabled="${DEVENV_INSTALL_MYBASH:-1}" \
   desc='bash prompt and dotfiles'

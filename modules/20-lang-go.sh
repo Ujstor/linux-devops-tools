@@ -140,9 +140,15 @@ install_go_toolchain() {
   # Unpack beside the target first, then swap. `tar -C /usr/local -xzf` over a
   # live tree leaves the previous release's files behind, and a half-extracted
   # /usr/local/go is a broken toolchain.
+  #
+  # --no-same-owner: tar run as root restores the archive's owners. Go's tarball
+  # is 0/0 today, so this changes nothing now — it is here because the neovim
+  # tarball was uid 1001 throughout and handed /usr/local/bin to that uid (see
+  # modules/50-editors.sh). A toolchain on every PATH must not depend on how
+  # upstream happened to build its archive.
   run_sudo rm -rf -- "$GOROOT_DIR.new" || return 1
   run_sudo install -d -m 0755 -- "$GOROOT_DIR.new" || return 1
-  run_sudo tar -C "$GOROOT_DIR.new" --strip-components=1 -xzf "$ar" || {
+  run_sudo tar -C "$GOROOT_DIR.new" --strip-components=1 --no-same-owner -xzf "$ar" || {
     run_sudo rm -rf -- "$GOROOT_DIR.new"
     return 1
   }

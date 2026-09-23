@@ -181,7 +181,7 @@ devenv — install and maintain this machine's developer environment
 Commands (default: install)
   install                 run the resolved plan
   list                    print every module with its profiles and gates (stdout, TSV)
-  doctor [--fix]          audit this machine; --fix repairs what it safely can
+  doctor [--fix]          audit this machine; --fix prints the repair plan, doctor itself changes nothing
   update                  fast-forward the checkout, then re-run the last plan
   uninstall [--all]       remove the shell integration and the files this repo owns
   shell install           add the managed block to ~/.bashrc
@@ -207,7 +207,7 @@ Options
       --ref REF           git ref used by `update`             (default: main)
       --force-update      let `update` overwrite local modifications
       --no-update         let `update` skip the fetch and just re-run the plan
-      --fix               `doctor` only: repair instead of just reporting
+      --fix               `doctor` only: print the repair plan (the commands, not run)
       --all               `uninstall` only: also drop ~/.config, ~/.cache and state
   -v, --verbose  -q, --quiet  --no-color
   -h, --help     -V, --version
@@ -419,9 +419,9 @@ apply_settings() {
 #   when the user has not already decided:
 #       full  ->  KREW_EXTRAS=1  INSTALL_PACKER=1  INSTALL_EXTRAS=1
 #       ai    ->  INSTALL_AI_AGENTS=1
-#   `ai` is the opt-in profile for the extra agent CLIs. Claude Code itself is a BASE
-#   install and ships in the default `devops` profile, so `INSTALL_AI_AGENTS` gates
-#   only the extras (opencode, crush).
+#   `ai` is the opt-in profile for the extra agent CLI. Claude Code and opencode are
+#   BASE installs and ship in the default `devops` profile, so `INSTALL_AI_AGENTS`
+#   gates only the extra (crush).
 apply_profile_gates() {
   # --only replaces the profile, so it replaces the profile's gates too: run one
   # module with the gates off unless the environment says otherwise.
@@ -625,7 +625,7 @@ checkout_kind() {
 
 update_git_checkout() {
   local before after
-  if [ -n "$(git -C "$DEVENV_HOME" status --porcelain 2>/dev/null)" ]; then
+  if [ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$DEVENV_HOME" status --porcelain 2>/dev/null)" ]; then
     if [ "${DEVENV_FORCE_UPDATE:-0}" != 1 ]; then
       log_warn "$DEVENV_HOME has local modifications — not touching them."
       log_warn "Re-run with --force-update to overwrite tracked files with $DEVENV_REF."

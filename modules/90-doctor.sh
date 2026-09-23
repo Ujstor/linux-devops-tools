@@ -415,7 +415,7 @@ check_path() {
   # old" bug. Report both paths; never remove anything.
   local cmd dupes=0
   local -a paths
-  for cmd in golangci-lint fzf jq rg fd bat nvim yq helm kubectl k9s starship; do
+  for cmd in golangci-lint fzf jq rg fd bat nvim tree-sitter yq helm kubectl k9s starship opencode; do
     # readlink -f first: /bin is a symlink to /usr/bin on every target, and two
     # names for one inode are not a duplicate installation.
     mapfile -t paths < <(
@@ -443,6 +443,66 @@ check_path() {
       hint 'both can coexist - check "yq --version" before trusting a script'
     fi
   fi
+  section_end
+}
+
+# ---------------------------------------------------------------------------
+# /usr/local ownership
+# ---------------------------------------------------------------------------
+
+# check_usr_local
+#   /usr/local and the directories every PATH searches must belong to root. tar
+#   run as root restores each entry's owner from the archive: every entry of the
+#   upstream neovim tarball is uid 1001 (GitHub's `runner`), so until
+#   modules/50-editors.sh passed --no-same-owner an install chowned
+#   /usr/local/bin, lib and share to uid 1001 — and whoever holds that uid (often
+#   the second account made on a box) can replace any binary root runs. A box
+#   installed before the fix still has it; this finds it.
+#   Reported with the exact repair, never repaired here. A /usr/local owned by YOU
+#   is only a warning: some people chown it to themselves on purpose.
+check_usr_local() {
+  section '/usr/local'
+  local d uid me name bad=0 uids=' '
+  me=$(id -u)
+  for d in /usr/local /usr/local/bin /usr/local/sbin /usr/local/lib /usr/local/share /usr/local/etc; do
+    [ -d "$d" ] || continue
+    uid=$(stat -c %u -- "$d" 2>/dev/null) || continue
+    [ "$uid" != 0 ] || continue
+    bad=$((bad + 1))
+    case $uids in *" $uid "*) ;; *) uids="$uids$uid " ;; esac
+    if [ "$uid" = "$me" ]; then
+      warn "$d is owned by you, not root"
+    else
+      name=$(getent passwd "$uid" 2>/dev/null | cut -d: -f1) || name=''
+      fail "$d is owned by uid $uid (${name:-no such user}), not root"
+    fi
+  done
+  if [ "$bad" = 0 ]; then
+    ok '/usr/local and the directories under it on PATH belong to root'
+  else
+    hint 'whoever owns them can replace binaries that root and every other user run'
+    for uid in $uids; do
+      plan "sudo find /usr/local -xdev -uid $uid -exec chown -h root:root {} +"
+    done
+  fi
+
+  # A link from a bin root searches to a file some user owns hands that user the
+  # name: nvim-config's installer left /usr/local/bin/tree-sitter pointing into
+  # ~/.cargo/bin, and root's nvim runs tree-sitter unasked to build parsers.
+  local l t owner links=0
+  for l in /usr/local/bin/* /usr/local/sbin/*; do
+    [ -L "$l" ] || continue
+    t=$(readlink -f -- "$l" 2>/dev/null) || continue
+    owner=$(stat -c %u -- "$t" 2>/dev/null) || continue
+    [ "$owner" != 0 ] || continue
+    links=$((links + 1))
+    fail "$l -> $t, a file uid $owner owns — that user decides what root runs as $(basename -- "$l")"
+    case $(basename -- "$l") in
+      tree-sitter) plan 'devenv --only editors               # replaces it with a root-owned tree-sitter' ;;
+      *) plan "sudo rm '$l'                  # then reinstall whatever needs it, as root" ;;
+    esac
+  done
+  if [ "$links" = 0 ]; then ok 'no link in /usr/local/bin or /usr/local/sbin points at a file a user owns'; fi
   section_end
 }
 
@@ -1050,6 +1110,7 @@ module_main() {
   check_apt
   check_shell
   check_path
+  check_usr_local
   check_python
   check_node
   check_kube_files

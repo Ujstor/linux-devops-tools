@@ -128,11 +128,11 @@ report_mybash() {
   elif [ -e "$HOME/.bashrc.bak" ]; then
     log_warn "mybash is checked out at $dir but ~/.bashrc is still a regular file."
     log_warn "  A ~/.bashrc.bak exists, so its setup.sh has run before — re-run it to relink:"
-    log_warn "      (cd '$dir' && ./setup.sh)"
+    log_warn "      (cd '$dir' && ./setup.sh --config-only)"
   else
     log_info "mybash is checked out at $dir; ~/.bashrc is a regular file and was not replaced"
     log_info "  every ~/.bashrc.d fragment works either way — run its setup.sh to adopt it:"
-    log_info "      (cd '$dir' && ./setup.sh)"
+    log_info "      (cd '$dir' && ./setup.sh --config-only)"
   fi
   return 0
 }
@@ -254,7 +254,7 @@ starship_config() {
       local repo_dir
       repo_dir=$(dirname -- "$target")
       if git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 \
-        && [ -n "$(git -C "$repo_dir" status --porcelain 2>/dev/null)" ]; then
+        && [ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$repo_dir" status --porcelain 2>/dev/null)" ]; then
         log_warn "$repo_dir has uncommitted changes — refusing to patch $target"
         return 0
       fi

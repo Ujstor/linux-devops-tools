@@ -55,10 +55,10 @@ assert_ok 'as is nvim-config' extrepo_enabled nvim-config
 assert_ok 'as is tmux-config' extrepo_enabled tmux-config
 
 # post= — the checkout's own installer, for the part a symlink cannot do.
-assert_eq './install.sh' "$(extrepo_get tmux-config post)" \
+assert_eq './install.sh --keep-config' "$(extrepo_get tmux-config post)" \
   'tmux-config finishes its install itself: TPM, the plugins and ~/tmux.sh'
-assert_eq './setup.sh' "$(extrepo_get mybash post)" \
-  'and mybash links its own dotfiles'
+assert_eq './setup.sh --config-only' "$(extrepo_get mybash post)" \
+  'and mybash links its own dotfiles — and installs no tool: this repository installs them, pinned'
 assert_eq '' "$(extrepo_get nvim-config post)" \
   'nvim-config has none — the symlink really is the whole install'
 

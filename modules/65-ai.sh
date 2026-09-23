@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # meta: name=ai
-# meta: desc=claude code as a base install, plus the opt-in ai agent clis
+# meta: desc=claude code and opencode as base installs, plus the opt-in crush
 # meta: profiles=devops,full,ai
 # meta: os=any
 # meta: needs=
@@ -24,12 +24,15 @@
 # installer itself refuses that, because under sudo everything would land in
 # root's home and the `claude` command would not work from the user's shell.
 #
-# opencode and crush are NOT base (they were found installed by hand, not by any
-# script). They need INSTALL_AI_AGENTS=1, which `--profile ai` sets.
+# opencode is a BASE install on exactly the same terms: its vendor installer,
+# install if absent, never upgraded or sudo-wrapped here. It was opt-in until it
+# joined the default profile beside Claude Code. crush is still opt-in: it needs
+# INSTALL_AI_AGENTS=1, which `--profile ai` sets.
 set -euo pipefail
 source "${DEVENV_HOME:?}/lib/common.sh"
 
 LOCAL_BIN="$HOME/.local/bin"
+OPENCODE_BIN="$HOME/.opencode/bin"
 
 # ---------------------------------------------------------------------------
 # Claude Code — base
@@ -83,12 +86,19 @@ report_npm_claude() {
 }
 
 # ---------------------------------------------------------------------------
-# The opt-in agents
+# opencode — base
 # ---------------------------------------------------------------------------
 
+# install_opencode
+#   Claude Code's terms exactly: the vendor installer when opencode is absent,
+#   nothing at all once it is present — `opencode upgrade` moves it on, this
+#   repository never does. Returns 1 when the installer fails, which fails the
+#   module the same way a failed Claude Code install does.
 install_opencode() {
-  if have opencode || [ -x "$HOME/.opencode/bin/opencode" ]; then
-    log_skip "opencode is already installed"
+  if have opencode || [ -x "$OPENCODE_BIN/opencode" ]; then
+    local v=''
+    v=$(bin_version "$OPENCODE_BIN/opencode" --version 2>/dev/null) || v=''
+    log_skip "opencode is already installed${v:+ ($v)} — 'opencode upgrade' moves it, so this repo leaves it alone"
     return 0
   fi
   local args=(--no-modify-path)
@@ -103,15 +113,19 @@ install_opencode() {
   # deliberately not resolved to a github.com/<owner>/<repo> here, because that
   # owner has already changed once.
   sh_installer_run "https://opencode.ai/install" \
-    --reason 'opencode publishes only this installer URL; it resolves the release and verifies its own download, and there is no stable per-release digest of the wrapper' \
+    --reason 'opencode publishes only this installer URL, with no per-release digest of it, and the installer does not checksum the archive it downloads' \
     -- "${args[@]}" \
     || {
-      log_warn "the opencode installer failed"
-      return 0
+      log_error "the opencode installer failed"
+      return 1
     }
   changed "opencode ${OPENCODE_VERSION:-latest}"
   return 0
 }
+
+# ---------------------------------------------------------------------------
+# The opt-in agents
+# ---------------------------------------------------------------------------
 
 install_crush() {
   if have crush; then
@@ -131,10 +145,9 @@ install_crush() {
 
 install_agents() {
   if [ "${INSTALL_AI_AGENTS:-0}" != 1 ]; then
-    log_skip "opencode and crush are opt-in: use --profile ai, or INSTALL_AI_AGENTS=1"
+    log_skip "crush is opt-in: use --profile ai, or INSTALL_AI_AGENTS=1"
     return 0
   fi
-  install_opencode
   install_crush
   return 0
 }
@@ -142,21 +155,34 @@ install_agents() {
 module_main() {
   log_step "ai agents"
 
-  install_claude || {
-    log_step_end
-    return 1
-  }
+  # Both base installs are attempted even when the first one fails: one vendor's
+  # installer being down is no reason to go without the other agent.
+  local failed=()
+  install_claude || failed+=("Claude Code")
   report_npm_claude
+  install_opencode || failed+=(opencode)
   install_agents
 
-  # The native installer puts everything in ~/.local/bin, which
-  # ~/.bashrc.d/10-path.sh prepends. Say so when the current process cannot see
-  # it, because that is the one confusing failure mode.
+  # Both native installers put their binary somewhere the PATH this process
+  # inherited may not reach yet — ~/.local/bin, which ~/.bashrc.d/10-path.sh
+  # prepends, and ~/.opencode/bin, which 70-tools.sh does. Say so, because that is
+  # the one confusing failure mode.
   if ! have claude && [ -x "$LOCAL_BIN/claude" ]; then
     log_info "claude is at $LOCAL_BIN/claude; open a new shell (or 'exec bash -l') to pick it up"
   fi
+  if ! have opencode && [ -x "$OPENCODE_BIN/opencode" ]; then
+    log_info "opencode is at $OPENCODE_BIN/opencode; open a new shell (or 'exec bash -l') to pick it up"
+  fi
 
   log_step_end
+  if [ ${#failed[@]} -gt 0 ]; then
+    log_error "base install(s) failed: ${failed[*]}"
+    # A deliberate failure exit: clear the ERR trap first, or lib/common.sh's trap
+    # prints two more "failed (exit 1) … command: return 1" lines after the one
+    # above and buries the real reason.
+    trap - ERR
+    exit 1
+  fi
   return 0
 }
 

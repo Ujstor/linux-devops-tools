@@ -3,24 +3,35 @@
 # Loads after mybash, so an `unalias` here wins.
 
 # --- grep: ripgrep is NOT a drop-in grep (K30) -----------------------------
-# mybash sets `alias grep='rg'` unconditionally. Measured on this box, the same
-# command in the same directory: `grep -r needle .` found 3 matches, `rg needle`
-# found 1 — rg skips hidden files and honours .gitignore, and it exits 0 either
-# way. `-E` in rg is `--encoding`, not "extended regex". There are no
+# An older mybash set `alias grep='rg'` unconditionally. Measured on this box, the
+# same command in the same directory: `grep -r needle .` found 3 matches, `rg
+# needle` found 1 — rg skips hidden files and honours .gitignore, and it exits 0
+# either way. `-E` in rg is `--encoding`, not "extended regex". There are no
 # backreferences and no look-around without --pcre2. Silent wrong answers in a
 # command the user copies out of runbooks is the wrong footgun to ship.
+# Only an alias that really runs rg goes: today's mybash sets
+# `grep --color=auto`, which is grep, and unaliasing it just lost the colour.
 if [ "${DEVENV_KEEP_GREP_ALIAS:-0}" != 1 ]; then
-  unalias grep 2>/dev/null
+  case $(alias grep 2>/dev/null) in
+    *"='rg"*) unalias grep ;;
+  esac
 fi
 if command -v rg >/dev/null 2>&1; then
   alias rgh='rg --hidden --no-ignore' # the "act like grep -r" ripgrep
 fi
 alias grepr='grep -rn --color=auto'
 
-# --- eza: absent from Debian 12, and mybash aliases ls to it unguarded ------
-# Without this, every `ls` on a bookworm VM fails with "command not found".
+# --- eza: absent from Debian 12, and an older mybash aliased ls to it --------
+# Without this, every `ls` on a bookworm VM failed with "command not found". Only
+# an alias that points at eza goes: today's mybash defines plain-ls aliases itself
+# when there is no eza, and dropping THOSE left `ll` and `la` undefined.
 if ! command -v eza >/dev/null 2>&1; then
-  unalias ls la ll lt 2>/dev/null
+  for _devenv_a in ls la ll lt; do
+    case $(alias "$_devenv_a" 2>/dev/null) in
+      *"='eza"*) unalias "$_devenv_a" ;;
+    esac
+  done
+  unset _devenv_a
 fi
 
 # --- terraform -------------------------------------------------------------

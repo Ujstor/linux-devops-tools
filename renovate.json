@@ -128,7 +128,7 @@
       "groupName": "shell and CLI tools"
     },
     {
-      "description": "AI agents and the Spec Kit ref, all opt-in profiles.",
+      "description": "AI agents and the Spec Kit ref. OPENCODE_VERSION is `latest` (its installer resolves the release), so this group only ever moves crush and Spec Kit.",
       "matchDepNames": [
         "anomalyco/opencode",
         "charmbracelet/crush",
@@ -150,6 +150,14 @@
         "kubevirt/kubevirt"
       ],
       "groupName": "kubevirt (manual, must match the cluster)",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "TREE_SITTER_VERSION is `# pin-policy: manual`: it must equal TREE_SITTER_VERSION in Ujstor/nvim-config's install.sh, which rebuilds the CLI with cargo whenever the one on PATH differs from its own pin. Bump both together. Surfaced on the dependency dashboard, never auto-PR'd.",
+      "matchDepNames": [
+        "tree-sitter/tree-sitter"
+      ],
+      "groupName": "tree-sitter (manual, must match nvim-config)",
       "dependencyDashboardApproval": true
     },
     {
