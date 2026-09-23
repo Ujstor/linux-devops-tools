@@ -377,6 +377,21 @@ install_tree_sitter() {
   fi
 
   cur=$(ts_version_of "$dest/tree-sitter") || cur=''
+  # In the system prefix the CLI must be root's own regular file. Older
+  # nvim-config installers left a SYMLINK there into ~/.cargo/bin: whatever runs
+  # as that user could swap the target, and root's nvim runs tree-sitter by
+  # itself at startup to build parsers. A version read through such a link says
+  # nothing about who controls it, so it counts as not installed, and ts_place
+  # replaces it with a fresh root-owned copy (never a copy of the link's target).
+  if [ -n "$cur" ] && [ "$dest" = "$NVIM_PREFIX/bin" ]; then
+    if [ -L "$dest/tree-sitter" ]; then
+      log_warn "$dest/tree-sitter is a symlink -> $(readlink "$dest/tree-sitter"); replacing it with a root-owned copy"
+      cur=''
+    elif [ "$(stat -c %u -- "$dest/tree-sitter" 2>/dev/null)" != 0 ]; then
+      log_warn "$dest/tree-sitter is not owned by root; replacing it with a root-owned copy"
+      cur=''
+    fi
+  fi
   if [ "$cur" = "$ver" ]; then
     log_skip "tree-sitter is already $ver ($dest/tree-sitter)"
     ts_report_shadow "$dest" "$ver"

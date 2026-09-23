@@ -485,6 +485,24 @@ check_usr_local() {
       plan "sudo find /usr/local -xdev -uid $uid -exec chown -h root:root {} +"
     done
   fi
+
+  # A link from a bin root searches to a file some user owns hands that user the
+  # name: nvim-config's installer left /usr/local/bin/tree-sitter pointing into
+  # ~/.cargo/bin, and root's nvim runs tree-sitter unasked to build parsers.
+  local l t owner links=0
+  for l in /usr/local/bin/* /usr/local/sbin/*; do
+    [ -L "$l" ] || continue
+    t=$(readlink -f -- "$l" 2>/dev/null) || continue
+    owner=$(stat -c %u -- "$t" 2>/dev/null) || continue
+    [ "$owner" != 0 ] || continue
+    links=$((links + 1))
+    fail "$l -> $t, a file uid $owner owns — that user decides what root runs as $(basename -- "$l")"
+    case $(basename -- "$l") in
+      tree-sitter) plan 'devenv --only editors               # replaces it with a root-owned tree-sitter' ;;
+      *) plan "sudo rm '$l'                  # then reinstall whatever needs it, as root" ;;
+    esac
+  done
+  if [ "$links" = 0 ]; then ok 'no link in /usr/local/bin or /usr/local/sbin points at a file a user owns'; fi
   section_end
 }
 
