@@ -293,12 +293,20 @@ helm_plugin_ensure() {
     log_skip "helm plugin '$name' is already installed"
     return 0
   fi
+  local args=("$url") label=$url
   if [ -n "$version" ]; then
-    run helm plugin install "$url" --version "$version" </dev/null \
-      || log_warn "helm plugin install $url ($version) failed"
-  else
-    run helm plugin install "$url" </dev/null || log_warn "helm plugin install $url failed"
+    args+=(--version "$version")
+    label="$url ($version)"
   fi
+  # Helm 4 verifies a plugin signature by default and refuses a git source, which
+  # cannot carry one ("plugin source does not support verification"). Every plugin
+  # here is a git URL pinned by tag — what Helm 3 installed with no verification
+  # at all — so --verify=false keeps that parity. Probed rather than matched on
+  # the version: Helm 3 does not know the flag and rejects it.
+  if helm plugin install --help 2>/dev/null | grep -qE '^[[:space:]]+--verify[[:space:]]'; then
+    args+=(--verify=false)
+  fi
+  run helm plugin install "${args[@]}" </dev/null || log_warn "helm plugin install $label failed"
   changed "helm plugin $name"
   return 0
 }

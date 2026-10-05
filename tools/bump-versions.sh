@@ -102,12 +102,13 @@ pending_repo='' pending_manual=0 pending_filter=''
 #   # pin-policy: manual        this pin is NOT to be moved automatically
 #   # tag-filter: <glob>        only tags matching this are candidates
 #
-# `pin-policy: manual` is load-bearing, not decoration. HELM_VERSION is pinned to
-# the 3.x line on purpose while upstream's latest is already 4.x — without this
-# check, `--write` would silently jump a major version in a bootstrap script.
-# Same shape for KOR, whose releases/latest is a Helm CHART tag (kor-0.x), not the
-# CLI's (vX.Y.Z): a bump there would rewrite the pin to an unrelated versioning
-# scheme, which is why it carries a tag-filter.
+# `pin-policy: manual` is load-bearing, not decoration. VIRTCTL_VERSION must match
+# the cluster's KubeVirt — without this check, `--write` would move it to whatever
+# upstream released last. A tag-filter is the softer hold: HELM_VERSION carries
+# `v4.*`, so 4.x patches move and the day Helm 5 is released the pin is skipped
+# rather than silently jumping a major in a bootstrap script. Same shape for KOR,
+# whose releases/latest is a Helm CHART tag (kor-0.x), not the CLI's (vX.Y.Z): a
+# bump there would rewrite the pin to an unrelated versioning scheme.
 while IFS= read -r line; do
   case $line in
     '# renovate:'*)

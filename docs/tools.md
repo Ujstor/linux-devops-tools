@@ -122,7 +122,7 @@ saved where it is.
 | tool | method | pin | profile | notes |
 |---|---|---|---|---|
 | kubectl | apt-v (flat repo) | `K8S_MINOR` | dev | `pkgs.k8s.io` is a flat repository — one line, no distribution branch. A downgrade is refused rather than performed |
-| helm | rel + published `.sha256sum` | `HELM_VERSION` | dev | pinned to 3.x on purpose; the `get-helm-3` script would happily walk into Helm 4 |
+| helm | rel + published `.sha256sum` | `HELM_VERSION` | dev | Helm 4, held on its major by a `v4.*` tag-filter; the `get-helm-4` script would walk into the next major unasked |
 | k9s | deb, else tarball | `K9S_VERSION` | dev | the tarball is `k9s_Linux_…`, the `.deb` is `k9s_linux_…`. Both exist for every release |
 | kubecolor | rel | `KUBECOLOR_VERSION` | dev | the `kubectl` alias is guarded by `command -v kubecolor` |
 | k3d | script (`TAG=`) | `K3D_VERSION` | dev | |
