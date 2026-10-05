@@ -90,6 +90,12 @@ assert_eq 0 "$rc" 'the helper still returns 0'
 assert_contains "$(cat "$REPOS")" 'c https://c.example' 'the next repository is still added'
 assert_contains "$err" 'could not be added: dead' 'the failure is named'
 
+# A run that only retried a failure added nothing — which must not read as "all
+# configured". DEVENV_QUIET hides that skip line, so it is lifted for this call.
+err=$(DEVENV_QUIET=0 helm_repos_ensure 'dead=https://unreachable.example' 2>&1 >/dev/null)
+assert_eq 0 "$(printf '%s\n' "$err" | grep -c 'already configured' || true)" \
+  'a failed retry is not reported as every repository being configured'
+
 : >"$CALLS"
 rc=0
 helm_repos_ensure 'no-equals-sign' '=https://x.example' 'd=' 2>/dev/null || rc=$?
