@@ -137,12 +137,12 @@
       "groupName": "ai agents"
     },
     {
-      "description": "HELM_VERSION is `# pin-policy: manual`. helm/helm's current release is already v4.x and this is a bootstrap script, so Renovate must never propose the major. Raise this ceiling deliberately, together with modules/35-kubernetes.sh.",
+      "description": "HELM_VERSION follows the 4.x line (`# tag-filter: v4.*`). This is a bootstrap script, so Renovate must never propose the next major. Raise this ceiling deliberately, together with modules/35-kubernetes.sh and lib/lang.sh's helm plugin helpers.",
       "matchDepNames": [
         "helm/helm"
       ],
       "groupName": "helm (manual major policy)",
-      "allowedVersions": "<4.0.0"
+      "allowedVersions": "<5.0.0"
     },
     {
       "description": "VIRTCTL_VERSION is `# pin-policy: manual`: it MUST match the cluster's KubeVirt version, which Renovate cannot know. Surfaced on the dependency dashboard, never auto-PR'd.",

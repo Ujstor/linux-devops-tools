@@ -86,9 +86,9 @@ a directory that is neither is left alone with a warning, and the plan is replay
 The layers that drift fastest have their own refresh paths, all idempotent:
 
 ```bash
-devenv --only k8s-plugins     # krew upgrade + helm plugin update
-devenv --only k9s-config      # re-apply plugins/hotkeys/skins
-devenv --only lang-python     # uv tool upgrade
+devenv --only k8s-plugins --upgrade  # krew upgrade, helm plugin update, helm repo update
+devenv --only k9s-config             # re-apply plugins/hotkeys/skins
+devenv --only lang-python            # uv tool upgrade
 ```
 
 ## Uninstalling

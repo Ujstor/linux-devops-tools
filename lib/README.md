@@ -63,7 +63,7 @@ Rules that hold in every library file:
 | `repo.sh` | deb822 sources, armored keyrings, suite resolution, per-vendor | `repo.sh` |
 | `extrepo.sh` | the declarative list of external **git config** repos: `extrepo`, `extrepo_sync_module`, the symlink policy | new |
 | `shell.sh` | `~/.bashrc` hook, `~/.bashrc.d` drop-ins, the completion cache | `shell.sh` |
-| `lang.sh` | go / cargo / uv / npm / helm-plugin / krew install helpers | `lang.sh` |
+| `lang.sh` | go / cargo / uv / npm / helm-plugin / helm-repo / krew install helpers | `lang.sh` |
 | `wsl.sh` | `/etc/wsl.conf` additive merge, WSL helpers | `wsl.sh` |
 | `registry.sh` | module discovery, `# meta:` parsing, plan, run, summary | `registry.sh` |
 

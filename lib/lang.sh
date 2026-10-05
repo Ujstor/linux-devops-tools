@@ -293,12 +293,20 @@ helm_plugin_ensure() {
     log_skip "helm plugin '$name' is already installed"
     return 0
   fi
+  local args=("$url") label=$url
   if [ -n "$version" ]; then
-    run helm plugin install "$url" --version "$version" </dev/null \
-      || log_warn "helm plugin install $url ($version) failed"
-  else
-    run helm plugin install "$url" </dev/null || log_warn "helm plugin install $url failed"
+    args+=(--version "$version")
+    label="$url ($version)"
   fi
+  # Helm 4 verifies a plugin signature by default and refuses a git source, which
+  # cannot carry one ("plugin source does not support verification"). Every plugin
+  # here is a git URL pinned by tag — what Helm 3 installed with no verification
+  # at all — so --verify=false keeps that parity. Probed rather than matched on
+  # the version: Helm 3 does not know the flag and rejects it.
+  if helm plugin install --help 2>/dev/null | grep -qE '^[[:space:]]+--verify[[:space:]]'; then
+    args+=(--verify=false)
+  fi
+  run helm plugin install "${args[@]}" </dev/null || log_warn "helm plugin install $label failed"
   changed "helm plugin $name"
   return 0
 }
@@ -320,6 +328,76 @@ helm_plugin_update() {
   for n in "$@"; do
     run helm plugin update "$n" || log_warn "helm plugin update $n failed"
   done
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Helm chart repositories
+# ---------------------------------------------------------------------------
+
+# helm_repos_ensure NAME=URL…
+#   Adds every chart repository whose NAME `helm repo list` does not show yet.
+#   The guard is the NAME (column 1), because that is what a chart reference
+#   such as `prometheus/kube-prometheus-stack` resolves. A NAME that is already
+#   configured is never touched, even when it points at a different URL: that is
+#   the user's choice, so it is reported and `--force-update` is never used.
+#   `helm repo add` downloads the repository's index, which is why nothing that
+#   is already configured is fetched again — `helm repo update` belongs to
+#   helm_repo_update and --upgrade. One unreachable repository is a warning and
+#   the next run retries it; the others still land.
+#   Honours --dry-run. Always returns 0 — one dead repository must not fail 36.
+helm_repos_ensure() {
+  [ $# -gt 0 ] || return 0
+  have helm || {
+    log_skip "helm is not installed — skipping the chart repositories"
+    return 0
+  }
+  local configured entry name url cur added=0 failed=()
+  # A box with no repository makes `helm repo list` exit 1 ("no repositories to
+  # show"); that is an empty list, not an error.
+  configured=$(helm repo list 2>/dev/null | awk 'NR>1 {print $1, $2}') || configured=''
+  for entry in "$@"; do
+    name=${entry%%=*}
+    url=${entry#*=}
+    if [ -z "$name" ] || [ "$name" = "$entry" ] || [ -z "$url" ]; then
+      log_warn "helm_repos_ensure: '$entry' is not NAME=URL — skipped"
+      continue
+    fi
+    cur=$(printf '%s\n' "$configured" | awk -v n="$name" '$1 == n {print $2; exit}')
+    if [ -n "$cur" ]; then
+      if [ "${cur%/}" != "${url%/}" ]; then
+        log_warn "helm repo '$name' is $cur here, not $url — left as it is"
+      fi
+      continue
+    fi
+    if ! run helm repo add "$name" "$url" </dev/null >/dev/null; then
+      failed+=("$name")
+      continue
+    fi
+    changed "helm repo $name"
+    added=$((added + 1))
+  done
+  if [ "$added" -gt 0 ]; then
+    log_info "added $added helm chart repositories"
+  else
+    log_skip "every helm chart repository on the roster is already configured"
+  fi
+  if [ ${#failed[@]} -gt 0 ]; then
+    log_warn "these helm chart repositories could not be added: ${failed[*]}"
+    log_warn "  each is retried on the next run of this module"
+  fi
+  return 0
+}
+
+# helm_repo_update
+#   `helm repo update` for every configured repository, so the chart indexes do
+#   not stay at the day they were added. The --upgrade path, never a plain run.
+#   Honours --dry-run. Always returns 0.
+helm_repo_update() {
+  have helm || return 0
+  helm repo list >/dev/null 2>&1 || return 0
+  run helm repo update </dev/null || log_warn "helm repo update reported an error"
+  changed "helm repo update"
   return 0
 }
 

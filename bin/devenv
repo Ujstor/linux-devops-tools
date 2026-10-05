@@ -871,6 +871,7 @@ cmd_uninstall() {
   log_info "release binaries:         /usr/local/bin (go, helm, k9s, neovim, starship, …)"
   log_info "krew plugins:             kubectl krew uninstall <name>   (~/.krew)"
   log_info "helm plugins:             helm plugin uninstall <name>"
+  log_info "helm repositories:        helm repo remove <name>"
   log_info "go tools:                 rm ~/go/bin/<tool>"
   log_info "python CLIs:              uv tool uninstall <name>"
   log_info "your own ~/.bashrc.d/90-local.sh is untouched, as always"

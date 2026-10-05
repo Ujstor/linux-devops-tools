@@ -28,7 +28,7 @@ Verified 2026-09-11 against `devenv list`.
 | 28 | `repo-dev` | full | any | any | — | no | `shellcheck`, `shfmt`, `pre-commit` — what CI for *this* repository needs |
 | 30 | `containers` | dev, full | **!container** | amd64, arm64 | — | **yes** | `docker-ce` from Docker's own repository, service start, and the docker-group question |
 | 35 | `kubernetes` | dev, full, ci | any | amd64, arm64 | — | **yes** | `kubectl`, `helm`, `k9s`, `k3d`, `kind`, `argocd`, `cilium`, `hubble`, `virtctl`, `kustomize`, `kubeconform`, `velero`, `crictl`, `trivy`, `yq` |
-| 36 | `k8s-plugins` | dev, full, ci | any | amd64, arm64 | `kubectl` | no | `krew` plus the kubectl plugin roster, and the Helm plugins (`diff`, `schema`, `unittest`, …) |
+| 36 | `k8s-plugins` | dev, full, ci | any | amd64, arm64 | `kubectl` | no | `krew` plus the kubectl plugin roster, the Helm plugins (`diff`, `schema`, `unittest`, …) and the 34 default Helm chart repositories |
 | 37 | `k9s-config` | dev, full, ci | any | amd64, arm64 | — | no | k9s plugins, hotkeys, aliases and skins, plus a skin that follows the current context |
 | 38 | `auth-sso` | dev, full | any | amd64, arm64 | — | no | the `open-url` browser shim, `clip`/`clip-paste`, `sso-login`, `sso-kubeconfig-add`, `web`, and the config templates. **No browser, no new binaries** |
 | 40 | `iac` | dev, full, ci | any | amd64, arm64 | — | **yes** | `terraform`, `tflint`, `terraform-docs`, OpenBao's `bao`, and the Ansible/security Python CLIs |

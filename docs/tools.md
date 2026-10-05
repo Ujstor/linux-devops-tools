@@ -122,7 +122,7 @@ saved where it is.
 | tool | method | pin | profile | notes |
 |---|---|---|---|---|
 | kubectl | apt-v (flat repo) | `K8S_MINOR` | dev | `pkgs.k8s.io` is a flat repository — one line, no distribution branch. A downgrade is refused rather than performed |
-| helm | rel + published `.sha256sum` | `HELM_VERSION` | dev | pinned to 3.x on purpose; the `get-helm-3` script would happily walk into Helm 4 |
+| helm | rel + published `.sha256sum` | `HELM_VERSION` | dev | Helm 4, held on its major by a `v4.*` tag-filter; the `get-helm-4` script would walk into the next major unasked |
 | k9s | deb, else tarball | `K9S_VERSION` | dev | the tarball is `k9s_Linux_…`, the `.deb` is `k9s_linux_…`. Both exist for every release |
 | kubecolor | rel | `KUBECOLOR_VERSION` | dev | the `kubectl` alias is guarded by `command -v kubecolor` |
 | k3d | script (`TAG=`) | `K3D_VERSION` | dev | |
@@ -185,10 +185,29 @@ Helm plugins, guarded on the **registered** name (which is what `helm plugin lis
 | `helm-git` | `aslafy-z/helm-git` | — | full |
 | `helm-docs` | standalone binary, not a plugin | `HELM_DOCS_VERSION` | dev |
 
-Refresh the whole plugin layer — krew, helm plugins and the k9s files — at any time:
+### Helm chart repositories
+
+The `HELM_REPOS` roster in `modules/36-k8s-plugins.sh` — 34 repositories, added under these exact
+names because a chart is referenced as `NAME/chart` (`prometheus/kube-prometheus-stack`):
+
+| group | names |
+|---|---|
+| networking and add-ons | `argo` `cilium` `coredns` `external-secrets` `ingress-nginx` `jetstack` `kedacore` `kyverno` `metallb` `metrics-server` `oauth2-proxy` `stakater` |
+| storage and backup | `ceph-csi-operator` `minio-operator` `openebs` `rook-release` `rustfs` `vmware-tanzu` |
+| datastores | `altinity` `elastic` `mariadb-operator` `mongodb` `opensearch` `opensearch-operator` `ot-helm` `redpanda` |
+| observability | `enix` `jaegertracing` `open-telemetry` `prometheus` `zabbix-community` |
+| applications | `gitlab` `harbor` `zammad` |
+
+Only a **missing name** is added, so a re-run downloads nothing. A name you already configured is
+never rewritten, even when it points at a different URL — the run reports the difference instead.
+A repository that cannot be reached is a warning and is retried on the next run. Nothing is ever
+removed: `helm repo remove <name>` is yours.
+
+Refresh the whole plugin layer — krew, helm plugins, the chart indexes and the k9s files — at any
+time:
 
 ```bash
-devenv --only k8s-plugins
+devenv --only k8s-plugins --upgrade
 devenv --only k9s-config
 ```
 

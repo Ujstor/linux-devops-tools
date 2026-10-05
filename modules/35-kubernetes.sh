@@ -35,9 +35,10 @@
 #   release binary      everything else, pinned in versions.env, checksum
 #                       verified, installed into $K8S_BIN_DIR.
 #   get.helm.sh         helm — the only tool here that does not live on GitHub.
-#                       `get-helm-3` is deliberately NOT used: it resolves
-#                       "latest" at run time and Helm 4 exists, so a bootstrap
-#                       script must not be allowed to jump a major (K1).
+#                       Helm 4. `get-helm-4` is deliberately NOT used: it
+#                       resolves "latest" at run time, and a bootstrap script
+#                       must not be allowed to jump a major (K1) the day Helm 5
+#                       is released.
 #
 # CHECKSUMS (MUST-FIX F14/D14). Every download above is verified against a
 # digest the vendor publishes. Three projects publish none, and each one says so
@@ -295,7 +296,7 @@ k8s_kubectl() {
 
 # k8s_helm
 #   Installs $HELM_VERSION from get.helm.sh and verifies the published
-#   .sha256sum. Never runs get-helm-3 (it resolves `latest` and Helm 4 exists).
+#   .sha256sum. Never runs get-helm-4 (it resolves `latest`, majors included).
 #   Always returns 0; the outcome is recorded.
 k8s_helm() {
   local want=${HELM_VERSION:?HELM_VERSION unset} ver arch asset url dl work cur sum
