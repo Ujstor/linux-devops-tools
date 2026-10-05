@@ -379,7 +379,7 @@ helm_repos_ensure() {
   done
   if [ "$added" -gt 0 ]; then
     log_info "added $added helm chart repositories"
-  else
+  elif [ ${#failed[@]} -eq 0 ]; then
     log_skip "every helm chart repository on the roster is already configured"
   fi
   if [ ${#failed[@]} -gt 0 ]; then
