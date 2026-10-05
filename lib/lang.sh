@@ -324,6 +324,76 @@ helm_plugin_update() {
 }
 
 # ---------------------------------------------------------------------------
+# Helm chart repositories
+# ---------------------------------------------------------------------------
+
+# helm_repos_ensure NAME=URL…
+#   Adds every chart repository whose NAME `helm repo list` does not show yet.
+#   The guard is the NAME (column 1), because that is what a chart reference
+#   such as `prometheus/kube-prometheus-stack` resolves. A NAME that is already
+#   configured is never touched, even when it points at a different URL: that is
+#   the user's choice, so it is reported and `--force-update` is never used.
+#   `helm repo add` downloads the repository's index, which is why nothing that
+#   is already configured is fetched again — `helm repo update` belongs to
+#   helm_repo_update and --upgrade. One unreachable repository is a warning and
+#   the next run retries it; the others still land.
+#   Honours --dry-run. Always returns 0 — one dead repository must not fail 36.
+helm_repos_ensure() {
+  [ $# -gt 0 ] || return 0
+  have helm || {
+    log_skip "helm is not installed — skipping the chart repositories"
+    return 0
+  }
+  local configured entry name url cur added=0 failed=()
+  # A box with no repository makes `helm repo list` exit 1 ("no repositories to
+  # show"); that is an empty list, not an error.
+  configured=$(helm repo list 2>/dev/null | awk 'NR>1 {print $1, $2}') || configured=''
+  for entry in "$@"; do
+    name=${entry%%=*}
+    url=${entry#*=}
+    if [ -z "$name" ] || [ "$name" = "$entry" ] || [ -z "$url" ]; then
+      log_warn "helm_repos_ensure: '$entry' is not NAME=URL — skipped"
+      continue
+    fi
+    cur=$(printf '%s\n' "$configured" | awk -v n="$name" '$1 == n {print $2; exit}')
+    if [ -n "$cur" ]; then
+      if [ "${cur%/}" != "${url%/}" ]; then
+        log_warn "helm repo '$name' is $cur here, not $url — left as it is"
+      fi
+      continue
+    fi
+    if ! run helm repo add "$name" "$url" </dev/null >/dev/null; then
+      failed+=("$name")
+      continue
+    fi
+    changed "helm repo $name"
+    added=$((added + 1))
+  done
+  if [ "$added" -gt 0 ]; then
+    log_info "added $added helm chart repositories"
+  else
+    log_skip "every helm chart repository on the roster is already configured"
+  fi
+  if [ ${#failed[@]} -gt 0 ]; then
+    log_warn "these helm chart repositories could not be added: ${failed[*]}"
+    log_warn "  each is retried on the next run of this module"
+  fi
+  return 0
+}
+
+# helm_repo_update
+#   `helm repo update` for every configured repository, so the chart indexes do
+#   not stay at the day they were added. The --upgrade path, never a plain run.
+#   Honours --dry-run. Always returns 0.
+helm_repo_update() {
+  have helm || return 0
+  helm repo list >/dev/null 2>&1 || return 0
+  run helm repo update </dev/null || log_warn "helm repo update reported an error"
+  changed "helm repo update"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # krew
 # ---------------------------------------------------------------------------
 

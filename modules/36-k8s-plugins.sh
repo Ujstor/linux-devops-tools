@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # meta: name=k8s-plugins
-# meta: desc=krew, the kubectl plugin roster and the helm plugins
+# meta: desc=krew, the kubectl plugin roster, the helm plugins and chart repositories
 # meta: profiles=devops,full,ci
 # meta: os=any
 # meta: arch=amd64,arm64
@@ -16,9 +16,10 @@
 # explained. Everything the machine actually has is captured here, in data.
 #
 # WHAT RUNS AS ROOT: nothing. krew installs into ~/.krew, helm plugins into
-# ~/.local/share/helm/plugins and helm-docs into ~/.local/bin. That is why this
-# module is `root=no` and why it still works on a box where the user is not a
-# sudoer.
+# ~/.local/share/helm/plugins, chart repositories into
+# ~/.config/helm/repositories.yaml and helm-docs into ~/.local/bin. That is why
+# this module is `root=no` and why it still works on a box where the user is not
+# a sudoer.
 #
 # THE TWO DELIBERATE DUPLICATES (MUST-FIX C10) — do not "deduplicate" them:
 #   krew `cilium` + the cilium CLI. The krew plugin is bmcustodio/kubectl-cilium
@@ -46,9 +47,10 @@
 # UPDATING LATER (MUST-FIX P5). The plugin layer is not inert after the first
 # install:
 #     devenv --only k8s-plugins --upgrade
-# runs `kubectl krew upgrade` for every installed plugin and `helm plugin update`
-# for every registered plugin. Without --upgrade this module only ever ADDS what
-# is missing, so a normal re-run stays fast and offline-safe.
+# runs `kubectl krew upgrade` for every installed plugin, `helm plugin update`
+# for every registered plugin and `helm repo update` for every chart repository.
+# Without --upgrade this module only ever ADDS what is missing, so a normal
+# re-run stays fast and offline-safe.
 #
 # IDEMPOTENCY. `krew install` skips an already-installed plugin and exits 0, and
 # `helm plugin install` exits 1 with "plugin already exists" — which is why the
@@ -121,6 +123,52 @@ KREW_EXTRAS_LIST=(
 #                            `kdebug` shell function in ~/.bashrc.d/30-k8s.sh.
 #   cert-manager,            conditional on a FLEET FACT this repo cannot probe
 #   ingress-nginx            from a laptop — see k8sp_report_conditional().
+
+# CHART REPOSITORIES (34). Added unconditionally, under exactly these names: a
+# chart is referenced as NAME/chart (`prometheus/kube-prometheus-stack`, not
+# `prometheus-community/…`), so the names are the ones the live box already uses.
+# A name that is already configured is never rewritten — see helm_repos_ensure.
+HELM_REPOS=(
+  # networking, ingress and cluster add-ons
+  "argo=https://argoproj.github.io/argo-helm"                       # argo-cd, workflows, rollouts
+  "cilium=https://helm.cilium.io/"                                  # the CNI
+  "coredns=https://coredns.github.io/helm"                          # cluster DNS
+  "external-secrets=https://charts.external-secrets.io"             # External Secrets Operator
+  "ingress-nginx=https://kubernetes.github.io/ingress-nginx"        # ingress controller
+  "jetstack=https://charts.jetstack.io"                             # cert-manager
+  "kedacore=https://kedacore.github.io/charts"                      # KEDA
+  "kyverno=https://kyverno.github.io/kyverno/"                      # kyverno and its policies
+  "metallb=https://metallb.github.io/metallb"                       # LoadBalancer addresses
+  "metrics-server=https://kubernetes-sigs.github.io/metrics-server" # the resource metrics API
+  "oauth2-proxy=https://oauth2-proxy.github.io/manifests"           # auth in front of an ingress
+  "stakater=https://stakater.github.io/stakater-charts"             # reloader
+  # storage and backup
+  "ceph-csi-operator=https://ceph.github.io/ceph-csi-operator" # ceph-csi drivers
+  "minio-operator=https://operator.min.io"                     # MinIO operator and tenants
+  "openebs=https://openebs.github.io/openebs"                  # OpenEBS storage engines
+  "rook-release=https://charts.rook.io/release"                # rook-ceph operator and cluster
+  "rustfs=https://rustfs.github.io/helm/"                      # RustFS object storage
+  "vmware-tanzu=https://vmware-tanzu.github.io/helm-charts"    # velero
+  # datastores and their operators
+  "altinity=https://helm.altinity.com"                                                # ClickHouse operator
+  "elastic=https://helm.elastic.co"                                                   # ECK and the Elastic stack
+  "mariadb-operator=https://helm.mariadb.com/mariadb-operator"                        # MariaDB operator
+  "mongodb=https://mongodb.github.io/helm-charts"                                     # MongoDB operators
+  "opensearch=https://opensearch-project.github.io/helm-charts/"                      # OpenSearch and Dashboards
+  "opensearch-operator=https://opensearch-project.github.io/opensearch-k8s-operator/" # OpenSearch operator
+  "ot-helm=https://ot-container-kit.github.io/helm-charts/"                           # OT-Container-Kit redis operator
+  "redpanda=https://charts.redpanda.com"                                              # Redpanda
+  # observability
+  "enix=https://charts.enix.io"                                               # x509-certificate-exporter
+  "jaegertracing=https://jaegertracing.github.io/helm-charts"                 # Jaeger
+  "open-telemetry=https://open-telemetry.github.io/opentelemetry-helm-charts" # collector and operator
+  "prometheus=https://prometheus-community.github.io/helm-charts"             # kube-prometheus-stack, exporters
+  "zabbix-community=https://zabbix-community.github.io/helm-zabbix"           # Zabbix server, proxy and agent
+  # applications
+  "gitlab=https://charts.gitlab.io/"            # gitlab and gitlab-runner
+  "harbor=https://helm.goharbor.io"             # Harbor registry
+  "zammad=https://zammad.github.io/zammad-helm" # Zammad helpdesk
+)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -313,6 +361,18 @@ k8sp_helm_plugins() {
   return 0
 }
 
+# k8sp_helm_repos
+#   The HELM_REPOS roster. Only what is missing is added, so a re-run on a box
+#   that has all of them downloads nothing; --upgrade refreshes the indexes.
+k8sp_helm_repos() {
+  have helm || {
+    log_skip "helm is not installed — skipping the chart repositories (run 'devenv --only kubernetes' first)"
+    return 0
+  }
+  helm_repos_ensure "${HELM_REPOS[@]}"
+  return 0
+}
+
 # k8sp_report_schema_gen
 #   MUST-FIX C11 + S9: report the archived plugin, never uninstall it.
 k8sp_report_schema_gen() {
@@ -381,8 +441,9 @@ k8sp_warn_shadow() {
 
 # k8sp_upgrade
 #   Only with --upgrade / DEVENV_UPGRADE=1. Refreshes the whole plugin layer:
-#   the krew index, every installed krew plugin, and every registered helm
-#   plugin. Always returns 0 — a plugin that fails to upgrade is a warning.
+#   the krew index, every installed krew plugin, every registered helm plugin
+#   and every chart repository's index. Always returns 0 — a plugin that fails
+#   to upgrade is a warning.
 k8sp_upgrade() {
   if [ "${DEVENV_UPGRADE:-0}" != 1 ]; then
     log_debug "plugin upgrade not requested (devenv --only k8s-plugins --upgrade)"
@@ -392,6 +453,7 @@ k8sp_upgrade() {
   krew_upgrade_all
   # shellcheck disable=SC2119  # no argument means "every registered plugin", by contract
   helm_plugin_update
+  helm_repo_update
   log_step_end
   return 0
 }
@@ -406,6 +468,7 @@ module_main() {
 
   k8sp_krew || rc=1
   k8sp_helm_plugins
+  k8sp_helm_repos
   k8sp_helm_docs
   k8sp_upgrade
   k8sp_report_virt_skew
