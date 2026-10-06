@@ -65,7 +65,15 @@ Lane D — harness and CI
 ## Phase 4 — integration
 
 - [X] T024 [US1] [US5] Local container matrix, all 13, default profile, twice: iterate to green
-- [ ] T025 [US2] SC-003: Debian-family fingerprints identical before/after on the 5 releases
+- [X] T025 [US2] SC-003: Debian-family fingerprints identical before/after on the 5 releases
+      Result (2026-10-06): the default set installed side by side from main before (4faa7f5) and
+      after (413031e) this feature, on debian:12/13 and ubuntu:22.04/24.04/26.04 at the same
+      moment. Installed packages and package sources are identical on all five, and so is every
+      file in the binary directories, with one exception: on Debian 12 and Ubuntu 22.04,
+      tree-sitter is compiled on the machine (the release binary needs a newer glibc), and two
+      cargo builds of the same pinned version have the same size but not the same hash. The
+      "before" install exited 1 on four of the five, where opencode's version lookup hit the
+      GitHub API rate limit. "After" exits 0 on all five.
 - [X] T026 [US3] One GitLab MR pipeline, 13/13 hard jobs green (cancel any other pipeline first)
 
 ## Phase 5 — lab proof (US4, INTERNAL)
