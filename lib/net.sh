@@ -547,9 +547,25 @@ gh_release_install() {
     return 1
   fi
 
-  # 3. extract + install
-  local work found
+  # 3. extract + install, in a work directory that is removed as soon as this
+  #    one tool is in place. The archive itself stays in $DEVENV_CACHE/dl (disk);
+  #    the unpacked copy is on $TMPDIR, a tmpfs at half the RAM on Arch, Fedora and
+  #    Debian 13, and kept until the module ended it filled it: the kubernetes
+  #    module unpacks a dozen tools, velero alone 150 MB, into 980 MB (Arch lab
+  #    guest, pipeline 65219).
+  local work rc=0
   work=$(devenv_tmpdir) || return 1
+  _net_place "$ar" "$asset" "$work" "$strip" "$apath" "$bin" "$dest" "$mode" "$ver" || rc=$?
+  rm -rf -- "$work"
+  return "$rc"
+}
+
+# _net_place ARCHIVE ASSET WORK STRIP APATH BIN DEST MODE VERSION   (private)
+#   gh_release_install's last step: unpack ARCHIVE into WORK (or copy a bare
+#   binary there), find BIN in it, install it to DEST/BIN with MODE, and record
+#   the change. The caller owns WORK. Returns 1 on any failure.
+_net_place() {
+  local ar=$1 asset=$2 work=$3 strip=$4 apath=$5 bin=$6 dest=$7 mode=$8 ver=$9 found
   case $asset in
     *.tar.* | *.tgz | *.txz | *.tar | *.zip)
       if [ -n "$strip" ]; then
