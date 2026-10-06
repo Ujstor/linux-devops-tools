@@ -2,9 +2,46 @@
 # devops/misc/linux-devops-tools — the whole .gitlab-ci.yml.
 #
 # Every gate lives in the component; this file only says which run.
-# The GitHub Actions workflow in .github/workflows/ci.yml stays as it
-# is — both CIs call the same make targets, so neither can drift from
+# The GitHub Actions workflow in .github/workflows/ci.yml runs the same
+# matrix — both CIs call the same make targets, so neither can drift from
 # a developer's laptop.
+
+# One pipeline per change. A push to a branch with an open MR would otherwise
+# start a branch pipeline AND an MR pipeline — two 13-image matrices on the same
+# commit, competing for the same runner. main and tags still run.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
 include:
-  - component: $CI_SHELL@1.1.0
+  - component: $CI_SHELL@1.3.1
+    inputs:
+      # A COPY of config/os-support.list's image column — GitLab resolves inputs
+      # before it can read a file. `make lint-os-support` (run by lint-policy)
+      # fails when the two disagree. Change the list and this together.
+      # Every row is a gate: no soft lane (SC-007), and the component's soft
+      # default is on, so it is switched off here explicitly.
+      container_matrix_images:
+        - docker.io/library/debian:12
+        - docker.io/library/debian:13
+        - docker.io/library/ubuntu:22.04
+        - docker.io/library/ubuntu:24.04
+        - docker.io/library/ubuntu:26.04
+        - docker.io/library/almalinux:9
+        - docker.io/library/almalinux:10
+        - docker.io/rockylinux/rockylinux:9
+        - docker.io/rockylinux/rockylinux:10
+        - docker.io/library/fedora:43
+        - docker.io/library/fedora:44
+        - docker.io/opensuse/leap:16.0
+        - docker.io/library/archlinux:latest
+      container_registry_prefix: ''
+      enable_container_soft_matrix: false
+      # The default set, installed for real on every release (spec 002 FR-016).
+      container_profile: devops
+      container_timeout: 90m
   - component: $CI_CLEANUP_ARTIFACTS@0.2.2

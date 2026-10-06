@@ -24,6 +24,7 @@ SHELL := /usr/bin/env bash
 SH_FILES := install.sh \
             $(wildcard bin/*) \
             $(wildcard lib/*.sh) \
+            $(wildcard lib/family/*.sh) \
             $(wildcard modules/*.sh) \
             $(wildcard tools/*.sh) \
             $(wildcard config/*.sh) \
@@ -84,9 +85,9 @@ gate = @test -f '$(1)' || { \
          exit 1; \
        }
 
-.PHONY: help lint lint-coverage fmt fmt-check syntax lint-policy lint-privacy \
-        lint-k9s lint-docs lint-yaml test test-unit test-bootstrap test-docker \
-        check bump bump-write clean
+.PHONY: help lint lint-coverage fmt fmt-check syntax lint-policy lint-os-support \
+        lint-privacy lint-k9s lint-docs lint-yaml test test-unit test-bootstrap \
+        test-docker check bump bump-write clean
 
 help: ## Show this help
 	@printf 'linux-devops-tools — make targets\n\n'
@@ -119,9 +120,20 @@ fmt: ## Reformat every script in place with shfmt
 fmt-check: ## Fail if any script is not shfmt-clean
 	$(SHFMT) -d $(SHFMT_FLAGS) $(SH_FILES)
 
-lint-policy: ## The rules shellcheck cannot express (tests/policy/rules.sh)
+# lint-os-support is a PREREQUISITE of lint-policy, not only a target of its own.
+# The GitLab component drives a fixed set of target names (its shell-targets job
+# lists them) and has no job for a new one, so a gate that only had its own
+# target would run on a laptop and in GitHub and never in GitLab. Hanging it off
+# lint-policy puts it in the component's policy job unchanged — and for the same
+# reason it runs its own --self-test: no CI job here would schedule that either.
+lint-policy: lint-os-support ## The rules shellcheck cannot express (tests/policy/rules.sh)
 	$(call gate,tests/policy/rules.sh)
 	@bash tests/policy/rules.sh
+
+lint-os-support: ## config/os-support.list vs. both CI matrices, matrix.sh and the lab inventory
+	$(call gate,tests/policy/os-support.sh)
+	@bash tests/policy/os-support.sh --self-test
+	@bash tests/policy/os-support.sh
 
 lint-privacy: ## The public-repo gate: no private host, IP, realm or kubeconfig
 	$(call gate,tests/policy/privacy.sh)
@@ -131,8 +143,11 @@ lint-k9s: ## Check the shipped k9s key map and plugin safety rules
 	$(call gate,tests/k9s-keys.sh)
 	@bash tests/k9s-keys.sh
 
+# The self-test runs here for the reason lint-os-support runs its own: the GitLab
+# component's docs job runs `make lint-docs` and nothing else.
 lint-docs: ## Check docs/modules.md still matches the module meta headers
 	$(call gate,tests/policy/docs-drift.sh)
+	@bash tests/policy/docs-drift.sh --self-test
 	@bash tests/policy/docs-drift.sh
 
 lint-yaml: ## Parse every shipped YAML file (k9s plugins, skins, the workflow)
@@ -154,8 +169,10 @@ test-docker: ## The container matrix: install twice, assert nothing changed
 	@bash tests/docker/matrix.sh
 
 # `check` is what CI's lint job runs, so lint-coverage belongs in it: a wildcard
-# that stopped matching is caught in the same second as a syntax error.
-check: lint-coverage syntax lint fmt-check ## Everything that runs in under a minute
+# that stopped matching is caught in the same second as a syntax error. So does
+# lint-os-support: a release added to the list and not to a CI matrix (or the
+# reverse) is a two-second finding, not a pipeline's worth of jobs later.
+check: lint-coverage syntax lint fmt-check lint-os-support ## Everything that runs in under a minute
 
 # `test` is the whole of CI, minus the container matrix's sibling jobs that are
 # already covered by test-docker. Every CI job below maps to exactly one target

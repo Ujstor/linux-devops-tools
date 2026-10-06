@@ -98,6 +98,61 @@ _fs_run_for() {
   fi
 }
 
+# _fs_selinux_active   (private)
+#   Returns 0 when files placed on this machine need an SELinux label: SELinux is
+#   on (`selinuxenabled`, the authoritative answer, when it is installed), or —
+#   without that tool — the family is an SELinux one (FAM_MAC=selinux, lib/os.sh).
+#   Read-only.
+_fs_selinux_active() {
+  if have selinuxenabled; then
+    selinuxenabled 2>/dev/null
+    return
+  fi
+  [ "${FAM_MAC:-none}" = selinux ]
+}
+
+# fs_selinux_relabel [-R] PATH…
+#   spec 002 FR-011 / D9: mandatory access control stays enforcing, so what this
+#   repository installs must carry the label the policy expects of its location.
+#   Runs `restorecon` on PATH… (-R: the whole tree under each) where SELinux is
+#   active and restorecon exists. A new file takes its DIRECTORY's type, not its
+#   path's: a toolchain unpacked into /usr/local/go.new and renamed into place
+#   keeps usr_t where the policy says bin_t, and a file moved in keeps the type of
+#   wherever it was downloaded. Through the same privilege gate as the write that
+#   put the file there. NEVER switches SELinux off: nothing in this repository
+#   calls setenforce or edits /etc/selinux/config, and tests/policy/rules.sh
+#   holds that. A no-op elsewhere — always on the Debian family, whose FAM_MAC is
+#   none. Honours --dry-run. Always returns 0: a label it could not restore is a
+#   warning, not a failed install.
+fs_selinux_relabel() {
+  local p opts=()
+  if [ "${1:-}" = -R ]; then
+    opts=(-R)
+    shift
+  fi
+  [ $# -gt 0 ] || return 0
+  _fs_selinux_active || return 0
+  have restorecon || return 0
+  for p in "$@"; do
+    [ -e "$p" ] || is_dry_run || continue
+    _fs_run_for "$p" restorecon "${opts[@]}" -- "$p" || log_warn "could not restore the SELinux label of $p"
+  done
+  return 0
+}
+
+# fs_install SRC DEST [MODE]
+#   Installs the file SRC as DEST (mode MODE, default 0755) through the right
+#   privilege gate — `install` unlinks DEST first, so a symlink there is replaced,
+#   never written through — and then restores DEST's SELinux label. The one way a
+#   downloaded or built executable should land in a bin directory.
+#   Honours --dry-run. Returns non-zero when the install failed.
+fs_install() {
+  local src=${1:?fs_install: SRC required} dest=${2:?fs_install: DEST required} mode=${3:-0755}
+  _fs_run_for "$dest" install -m "$mode" -- "$src" "$dest" || return 1
+  fs_selinux_relabel "$dest"
+  return 0
+}
+
 # ensure_dir PATH [MODE]
 #   Creates PATH and any missing parents. MODE defaults to 0755.
 #   No-op (silent, no dry-run line) when the directory already exists.

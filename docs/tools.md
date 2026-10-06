@@ -30,6 +30,10 @@ A tool listed at `min` is in every richer profile too.
 Every download is checksum-verified. Where an upstream publishes no checksum, the call site must say
 so explicitly and give a reason — there is a policy test for it.
 
+The tables describe the **Debian family**. On RedHat, SUSE and Arch every `apt` name is translated
+through [`config/packages.map`](../config/packages.map) to that family's package, and the tools
+whose *source* differs per family are in [Per-family sources](#per-family-sources).
+
 ---
 
 ## Base, shell and editors
@@ -55,12 +59,12 @@ so explicitly and give a reason — there is a policy test for it.
 | starship | script | `STARSHIP_VERSION` | `shell` | min | prompt config is left alone if you already have one |
 | 7-Zip (`7zz`) | apt-first | — | `shell` | dev | `7zip` or `p7zip-full`, whichever exists; `~/.local/bin/7z` symlink |
 | gdu | apt, else `go` | `GO_TOOL_GDU` | `shell` | dev | packaged nearly everywhere — no reason to compile it |
-| yazi | deb | `YAZI_VERSION` | `shell` | full | in no distribution archive |
+| yazi | deb, or rel (musl) | `YAZI_VERSION` | `shell` | full | in no distribution archive. The `.deb` is the gnu build and needs glibc 2.39, so bookworm and jammy take the static musl zip |
 | fastfetch | apt-first, else deb | `FASTFETCH_VERSION` | `shell` | full | absent from bookworm and noble |
 | duf | apt | — | `shell` | full | |
 | Nerd Font (symbols only) | rel | `NERD_FONT_VERSION` | `shell` | opt | **only** on a box that is neither WSL nor headless — everywhere else the glyphs are the terminal's job, on the machine you are actually looking at |
 | git-delta | a/r ≥ 0.16 | `DELTA_VERSION` | `git` | dev | absent from bookworm |
-| gh | apt-v | — | `git`, `cloud` | min | the suite is literally `stable`, so the source line is identical on both distributions |
+| gh | apt-v | — | `git`, `cloud` | min | the suite is literally `stable`, so the source line is identical on Debian and Ubuntu |
 | neovim | rel | `NEOVIM_VERSION` | `editors` | dev | always upstream: bookworm has 0.7.2 and noble 0.9.5, both too old for a modern Lua config |
 | tree-sitter CLI | rel, else `cargo` | `TREE_SITTER_VERSION` | `editors` | dev | nvim-treesitter's `main` branch compiles every parser with it. The release binary needs glibc 2.39, so it is **run before it is installed**: on bookworm and jammy it cannot load, and the same pin is built with `cargo install --locked` instead (needs `lang-rust`; `clang`/`libclang-dev` are installed for that build only). Kept equal to nvim-config's own pin |
 | tmux | apt (or source with `TMUX_FROM_SOURCE=1`) | — | `editors` | dev | |
@@ -124,7 +128,7 @@ saved where it is.
 | kubectl | apt-v (flat repo) | `K8S_MINOR` | dev | `pkgs.k8s.io` is a flat repository — one line, no distribution branch. A downgrade is refused rather than performed |
 | helm | rel + published `.sha256sum` | `HELM_VERSION` | dev | Helm 4, held on its major by a `v4.*` tag-filter; the `get-helm-4` script would walk into the next major unasked |
 | k9s | deb, else tarball | `K9S_VERSION` | dev | the tarball is `k9s_Linux_…`, the `.deb` is `k9s_linux_…`. Both exist for every release |
-| kubecolor | rel | `KUBECOLOR_VERSION` | dev | the `kubectl` alias is guarded by `command -v kubecolor` |
+| kubecolor | deb | `KUBECOLOR_VERSION` | dev | the `kubectl` alias is guarded by `command -v kubecolor` |
 | k3d | script (`TAG=`) | `K3D_VERSION` | dev | |
 | kind | rel | `KIND_VERSION` | dev | architecture-aware |
 | cilium CLI | rel + `sha256sum` | `CILIUM_CLI_VERSION` | dev | the standalone CLI. **Not** the krew `cilium` plugin — both are installed, see below |
@@ -136,12 +140,12 @@ saved where it is.
 | kubectl-pgo | rel | `KUBECTL_PGO_VERSION` | dev | Crunchy PGO's own CLI; not in the krew index |
 | velero | rel | `VELERO_VERSION` | dev | the repository was renamed upstream; release lookups follow redirects |
 | crictl | rel | `CRICTL_VERSION` | dev | k3s runs containerd |
-| trivy | apt-v (suite `generic`) | — | dev | one identical source line on both distributions |
+| trivy | apt-v (suite `generic`) | — | dev | one identical source line on Debian and Ubuntu |
 | dive | deb | `DIVE_VERSION` | dev | the tag is `v0.13.1` and the asset drops the `v` — a good example of why there is exactly one tag rule |
 | grpcurl | deb | `GRPCURL_VERSION` | dev | used against the fleet's Go services |
 | yq (mikefarah v4) | rel | `YQ_VERSION` | dev | the distro `yq` is a different program (a Python wrapper around `jq`). It is reported, never removed |
 | kubelogin (Azure) | rel | `KUBELOGIN_VERSION` | dev | `convert-kubeconfig` for AKS. A **different project** from krew `oidc-login` |
-| kor, kube-linter, kube-bench, nerdctl, kubeseal | rel/deb | pinned | opt | behind `INSTALL_K8S_OPT=1`; `full` does not turn these on |
+| kor, kube-linter, kube-bench, nerdctl, kubeseal | rel/deb | pinned | opt | behind `INSTALL_K8S_OPT=1`; `full` does not turn these on. kube-bench is the `.deb` |
 
 ## kubectl and Helm plugins (module `k8s-plugins`)
 
@@ -233,7 +237,7 @@ Decoded secrets go to the pager and nowhere else — never to a file, never to a
 | tool | method | module | profile | notes |
 |---|---|---|---|---|
 | docker-ce + cli + containerd.io + buildx + compose | apt-v | `containers` | dev | conflicting packages are **reported**, not purged. Group membership is root-equivalent and needs `--allow-docker-group` |
-| terraform | apt-v | `iac` | dev | `TERRAFORM_VERSION=apt` — the HashiCorp repository decides. The suite is verified before the source file is written |
+| terraform | apt-v | `iac` | dev | `TERRAFORM_VERSION=apt` — the HashiCorp repository decides. The suite is verified before the source file is written. Where no HashiCorp repository serves the machine, the release zip pinned as `TERRAFORM_RELEASE_VERSION` — see [Per-family sources](#per-family-sources) |
 | packer | apt-v | `iac` | full | behind `INSTALL_PACKER=1` |
 | terraform-docs | rel | `iac` | dev | `TERRAFORM_DOCS_VERSION` |
 | tflint | rel | `iac` | dev | `TFLINT_VERSION` |
@@ -248,6 +252,65 @@ Decoded secrets go to the pager and nowhere else — never to a file, never to a
 | azure-cli | apt-v, else uv | `cloud` | dev | no `trixie` build exists; the module maps newer suites to `noble` and finally skips with a reason |
 | hcloud | go | `cloud` | dev | `GO_TOOL_HCLOUD` |
 | crane | go | `cloud` | dev | `GO_TOOL_CRANE` |
+
+## Per-family sources
+
+Source of truth: `lib/repo.sh` (vendor repositories), the call sites in `modules/{10,30,35,40,45}-*.sh`
+and [`config/packages.map`](../config/packages.map). Checked against the vendors' published trees
+and the pinned releases' asset lists, 2026-10-06.
+
+Third-party repositories are added only in the family's native form, with the key validated and
+digest-pinnable exactly like an apt key ([configuration.md](configuration.md#signing-key-digests)).
+Where a vendor publishes nothing for a family, the fallback order is: the distribution's own
+package → a verified release artifact → `uv tool install` → a skip with the reason.
+
+| tool | debian (apt) | redhat (dnf) | suse (zypper) | arch (pacman) |
+|---|---|---|---|---|
+| kubectl | `pkgs.k8s.io` deb, `K8S_MINOR` | `pkgs.k8s.io` rpm `.repo`, same minor | the same rpm tree | the official **`dl.k8s.io`** binary, newest patch of `K8S_MINOR`, `.sha256`-verified. Never Arch's own `kubectl`, which follows Arch, not the fleet |
+| docker | `download.docker.com` deb | `download.docker.com` `.repo` — the `centos` tree for AlmaLinux/Rocky, `fedora` for Fedora | distro `docker`, `docker-buildx`, `docker-compose` | distro `docker`, `docker-buildx`, `docker-compose` |
+| terraform | HashiCorp deb | HashiCorp `.repo` (`RHEL`/`fedora` tree); a Fedora release HashiCorp has dropped → release zip | release zip, `TERRAFORM_RELEASE_VERSION`, `SHA256SUMS`-verified | distro `terraform` |
+| packer (`INSTALL_PACKER=1`) | HashiCorp deb | HashiCorp `.repo` | **skip** — no repository, no package | distro `packer` |
+| gh | `cli.github.com` deb | `cli.github.com` rpm `.repo` | the same rpm tree | distro `github-cli` |
+| azure-cli | `packages.microsoft.com` deb, else uv | EL 9/10: `packages.microsoft.com/rhel/<major>/prod`, `includepkgs=azure-cli`. Fedora: uv | uv | uv |
+| trivy | `get.trivy.dev` deb | `get.trivy.dev` rpm `.repo` | the same rpm tree | distro `trivy` |
+
+Where Microsoft publishes nothing (Fedora, Leap, Arch), an `azure-cli` a distribution package
+already installed is left alone, never shadowed by a uv copy.
+
+Tools a release publishes as a **package** go through `pkg_release_install`: the `.deb` on apt,
+the `.rpm` on dnf and zypper (same release, same checksum file), and the release archive on
+pacman or where the release has no `.rpm`. A package file is never unpacked or installed as a
+binary.
+
+| tool | debian | redhat, suse | arch |
+|---|---|---|---|
+| k9s, kubecolor, dive, grpcurl | `.deb` | `.rpm` | archive |
+| bao (OpenBao), glab | `.deb` | `.rpm` | archive (`bao` / `bin/glab` alone) |
+| fastfetch (`full`) | distro package, else `.deb` | distro package, else `.rpm` | distro package, else archive |
+| yazi (`full`) | `.deb` on glibc ≥ 2.39, else the static musl zip | musl zip (the gnu build does not start on EL 9) | musl zip |
+| kube-bench (`INSTALL_K8S_OPT=1`) | `.deb` | `.rpm` | **skip** — the archive's binary needs the `cfg/` tree only the packages install |
+
+On openSUSE Leap a vendor-signed `.rpm` whose key no repository imports (kubecolor, OpenBao) is
+installed after its checksum is verified — the same trust a `.deb` gets from dpkg.
+
+### Skipped, with the reason
+
+Each one appears in the run summary as a skip; none fails the run.
+
+| what | where | reason |
+|---|---|---|
+| `nala` | redhat, suse, arch | an apt front end |
+| `wslu` | redhat, suse, arch | Ubuntu's `universe` only |
+| `purge-desktop`, `migrate` | redhat, suse, arch | `family=debian`: *not applicable on the <family> family* |
+| `headless-browser`'s `install-deps` | redhat, suse, arch | Playwright's dependency installer is apt-only |
+| `autojump`, `multitail` | arch | AUR only |
+| `resvg` | redhat, suse | in no EL, EPEL, Fedora or Leap repository |
+| packer, kube-bench | see the tables above | |
+| any package install | arch, index behind the mirrors | `the package index needs a full upgrade: re-run with --upgrade` |
+
+Names only some releases of a family carry (`trash-cli` is EPEL 9 only, `nmap` is not in Leap
+16) are dropped with the usual *no installation candidate* warning. The trailing comment on each
+row of `config/packages.map` says which.
 
 ## Language toolchains
 
@@ -338,7 +401,8 @@ One file: [`versions.env`](../versions.env). Nothing else pins anything, and eve
   convention a project uses.
 * `latest` resolves at install time from the `releases/latest` redirect — no GitHub API, so no rate
   limit — asserts the result really is a release tag, and caches it for six hours.
-* `apt` means "not pinned here; the vendor's repository decides".
+* `apt` means "not pinned here; the vendor's repository decides" — on every family that has one.
+  A path with no repository has its own pin (`TERRAFORM_RELEASE_VERSION`).
 * `auto` (only `K8S_MINOR`) probes the upstream stable stream.
 
 Override any of them for a single run:

@@ -1,7 +1,7 @@
 # Everyday use
 
 **Source of truth:** `devenv --help` and `install.sh --help` on your checkout. This page is the
-narrated version, verified 2026-09-10.
+narrated version, verified 2026-10-06.
 
 `devenv` lives at `~/.local/share/linux-devops-tools/bin/devenv`. The shell integration puts
 `~/.local/bin` at the front of `PATH`; if `devenv` is still not found after `exec bash -l`:
@@ -42,7 +42,7 @@ devenv list | awk -F'\t' '$7=="yes"{print $1}'      # every module that wants ro
 | `-y, --yes` | answer ordinary prompts with yes — never the dangerous ones |
 | `--fail-fast` | stop at the first failing module (default: continue) |
 | `--extras` | turn on `KREW_EXTRAS` and `INSTALL_EXTRAS` for this run |
-| `--upgrade` | allow `apt-get upgrade`. Never implicit |
+| `--upgrade` | allow a system upgrade (`apt-get upgrade`, `dnf upgrade`, `zypper update`; on Arch the one `pacman -Syu` an install needs when the package index is behind). Never implicit |
 
 ```bash
 devenv --dry-run                       # a full plan, nothing touched

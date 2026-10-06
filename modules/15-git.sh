@@ -147,7 +147,12 @@ install_delta() {
   return 0
 }
 
+# install_gh — the GitHub CLI, from the vendor's repository in the family's own
+#   form (deb822 / .repo). Arch has no vendor repository (repo_ensure_github_cli
+#   returns 78 there), so it takes the distribution's package instead — plan D6's
+#   fallback order; config/packages.map names it (`github-cli`).
 install_gh() {
+  local rc=0
   if have gh; then
     log_debug "gh $(gh --version 2>/dev/null | head -n1 | awk '{print $3}') is installed"
     return 0
@@ -156,12 +161,16 @@ install_gh() {
     log_skip 'gh (GitHub CLI) needs root to install — skipping, everything else still runs'
     return 0
   fi
-  repo_ensure_github_cli || {
-    log_warn 'could not configure the GitHub CLI apt repository'
+  repo_ensure_github_cli || rc=$?
+  if [ "$rc" = 78 ] && ! os_family_is debian; then
+    log_info "gh: no vendor repository for the ${OS_FAMILY} family — using the distribution's package"
+  elif [ "$rc" != 0 ]; then
+    log_warn 'could not configure the GitHub CLI package repository'
     return 0
-  }
-  pkg_update
-  pkg_install gh || log_warn 'gh did not install - try again after an apt-get update'
+  else
+    pkg_update
+  fi
+  pkg_install gh || log_warn 'gh did not install - refresh the package index and try again'
   return 0
 }
 
@@ -182,9 +191,10 @@ report_tls() {
   log_warn 'git http.sslVerify is FALSE, GLOBALLY — every host, github.com included,'
   log_warn 'is fetched without verifying its TLS certificate.'
   log_warn 'REPORT ONLY: this module will never change it. When you want to fix it:'
+  # The anchor directory and the refresh command are the family's (FR-013).
   log_warn '  1. install the CA that made you disable it:'
-  log_warn '       sudo cp your-ca.crt /usr/local/share/ca-certificates/'
-  log_warn '       sudo update-ca-certificates'
+  log_warn "       sudo cp your-ca.crt $FAM_CA_ANCHOR_DIR/"
+  log_warn "       sudo $FAM_CA_REFRESH"
   log_warn '  2. drop the global switch:'
   log_warn '       git config --global --unset http.sslVerify'
   log_warn '  3. if one host still needs a private CA, scope it to that host only:'

@@ -19,7 +19,12 @@
 # This module owns xvfb, the fonts-* set, libnss3/libatk*/libgbm1/libcups2t64/
 # libasound2t64, libgtk-3-0t64, libgtk-4-1, libgles2, libepoxy0 and gstreamer1.0-*.
 # They are NOT x11/desktop residue — they are Playwright's own runtime deps —
-# which is why 91-purge-desktop `apt-mark manual`s them before it autoremoves.
+# which is why 91-purge-desktop marks them manual before it autoremoves.
+#
+# OFF THE DEBIAN FAMILY `install-deps` is SKIPPED, with the reason (FR-006): it is
+# an apt-get wrapper and Playwright publishes no dependency list for dnf, zypper
+# or pacman. The browser download itself is family-neutral and still runs; the
+# browsers then need their libraries from the distribution's own packages.
 set -euo pipefail
 source "${DEVENV_HOME:?}/lib/common.sh"
 
@@ -31,23 +36,28 @@ module_main() {
   local npx
   npx=$(command -v npx) || skip "npx is not on PATH"
 
-  log_info "delegating the dependency list to $PW_SPEC (never hand-maintained here)"
+  if os_family_is debian; then
+    log_info "delegating the dependency list to $PW_SPEC (never hand-maintained here)"
 
-  # `sudo npx` alone loses an nvm-provided node: sudo resets PATH and npx's
-  # shebang is `#!/usr/bin/env node`. Hand the child the caller's PATH.
-  if ! run_sudo env "PATH=$PATH" "$npx" --yes "$PW_SPEC" install-deps; then
-    log_error "playwright install-deps failed."
-    log_error "  On a distro Playwright does not know yet, install its deps by hand:"
-    log_error "  npx $PW_SPEC install-deps --dry-run   prints the exact apt line."
-    return 1
+    # `sudo npx` alone loses an nvm-provided node: sudo resets PATH and npx's
+    # shebang is `#!/usr/bin/env node`. Hand the child the caller's PATH.
+    if ! run_sudo env "PATH=$PATH" "$npx" --yes "$PW_SPEC" install-deps; then
+      log_error "playwright install-deps failed."
+      log_error "  On a distro Playwright does not know yet, install its deps by hand:"
+      log_error "  npx $PW_SPEC install-deps --dry-run   prints the exact apt line."
+      return 1
+    fi
+    changed "playwright system dependencies"
+  else
+    log_skip "playwright install-deps: not applicable on the ${OS_FAMILY:-unknown} family (it drives apt-get only)"
+    log_info "  the browsers still download; their system libraries come from ${OS_PKG_MGR:-the package manager}"
   fi
-  changed "playwright system dependencies"
 
   # Browser builds land in ~/.cache/ms-playwright and are skipped when present,
   # so a second run downloads nothing.
   # shellcheck disable=SC2086  # PW_BROWSERS is a deliberate word list
   if ! run "$npx" --yes "$PW_SPEC" install $PW_BROWSERS; then
-    log_warn "browser download failed — the system deps are installed; retry with:"
+    log_warn "browser download failed; retry with:"
     log_warn "  npx $PW_SPEC install $PW_BROWSERS"
     return 0
   fi

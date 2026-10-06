@@ -36,6 +36,10 @@
 # MUST-FIX F14: a `curl | bash` vendor installer goes through `sh_installer_run`,
 # which can verify a pinned sha256 of the SCRIPT and warns loudly when it cannot.
 # Prefer gh_release_install with a published checksum wherever one exists.
+#
+# Spec 002 FR-015: a release asset that is a distribution PACKAGE (.deb, .rpm) goes
+# through `pkg_release_install`, which hands it to this family's package manager —
+# and never, on any family, to gh_release_install as if it were the executable.
 
 [ -n "${_DEVENV_NET:-}" ] && return 0
 _DEVENV_NET=1
@@ -71,8 +75,12 @@ download() {
     # vendor's suite ladder still fails immediately instead of four times slowly.
     # The option is only added when this curl knows it (7.71+; every target is far
     # newer, but an unknown option would make curl exit 2 and fail every download).
+    # The help text is read whole: a `| grep -q` exits at its first match, curl
+    # dies of SIGPIPE and pipefail turns a found option into "not supported".
     local -a retry_opt=()
-    if curl --help all 2>/dev/null | grep -q -- '--retry-all-errors'; then
+    local help
+    help=$(curl --help all 2>/dev/null) || help=''
+    if [[ $help == *--retry-all-errors* ]]; then
       retry_opt=(--retry-all-errors)
     fi
     run curl -fsS "${DEVENV_CURL_OPTS[@]}" ${retry_opt[0]+"${retry_opt[@]}"} \
@@ -93,14 +101,23 @@ download() {
 }
 
 # http_ok URL
-#   Returns 0 when a HEAD of URL, AFTER following redirects, answers 2xx.
+#   Returns 0 when a HEAD of URL, AFTER following redirects, answers 2xx; 1 when
+#   the server says the thing does not exist (404/410); 2 when it could not be
+#   told — a timeout, a 5xx, a 429 or a rate-limit 403. Callers that SKIP on a
+#   missing asset must skip on 1 only: a 2 taken for "not published" made a
+#   network blip a silent skip, and the next run then installed it (dive on
+#   ubuntu:24.04, pipeline 65170). Boolean callers are unaffected.
 #   MUST-FIX C6: pkgs.k8s.io answers 302, so a 200-only test is wrong.
-#   Read-only: runs under --dry-run. Returns 1 when curl is absent.
+#   Read-only: runs under --dry-run. Returns 2 when curl is absent.
 http_ok() {
   local url=${1:?http_ok: URL required} code
-  have curl || return 1
-  code=$(curl -sSIL "${DEVENV_CURL_OPTS[@]}" --max-time 20 -o /dev/null -w '%{http_code}' -- "$url" 2>/dev/null) || return 1
-  case $code in 2??) return 0 ;; *) return 1 ;; esac
+  have curl || return 2
+  code=$(curl -sSIL "${DEVENV_CURL_OPTS[@]}" --max-time 20 -o /dev/null -w '%{http_code}' -- "$url" 2>/dev/null) || code=''
+  case $code in
+    2??) return 0 ;;
+    404 | 410) return 1 ;;
+    *) return 2 ;;
+  esac
 }
 
 # http_body URL
@@ -384,6 +401,12 @@ _net_extract() {
 #     --version-regex RE      how to find the version in that output
 #     --tag-filter RE         passed to gh_latest_tag when VERSION is `latest`
 #     --mode MODE             install mode (default 0755)
+#     --base-url URL          download the asset (and a --checksum-asset) from
+#                             URL/<asset> instead of the GitHub release. Tokens
+#                             expand, so a release that does not live on GitHub
+#                             is spelled 'https://releases.hashicorp.com/terraform/{version}'
+#                             or '…/gitlab-org/cli/-/releases/{tag}/downloads'.
+#                             REPO then only resolves `latest` and labels messages.
 #   Behaviour:
 #     0. resolve the tag; if BIN already reports that version -> return 0, NO download
 #     1. download the asset (and its checksum) into $DEVENV_CACHE/dl, which survives
@@ -400,10 +423,11 @@ gh_release_install() {
   local bin=${3:?gh_release_install: BIN required}
   local version=${4:?gh_release_install: VERSION required}
   shift 4
-  local csum_asset='' csum_url='' sha='' no_verify=0 no_verify_reason=''
+  local csum_asset='' csum_url='' sha='' no_verify=0 no_verify_reason='' base=''
   local apath='' strip='' dest=/usr/local/bin vcmd='--version' vre='' tagfilter='' mode=0755
   while [ $# -gt 0 ]; do
     case $1 in
+      --base-url) base=$2 ;;
       --checksum-asset) csum_asset=$2 ;;
       --checksum-url) csum_url=$2 ;;
       --sha256) sha=$2 ;;
@@ -446,7 +470,12 @@ gh_release_install() {
   fi
 
   asset=$(expand_asset "$pattern" "$tag") || return 1
-  url="https://github.com/$repo/releases/download/$tag/$asset"
+  if [ -n "$base" ]; then
+    base=$(expand_asset "$base" "$tag") || return 1
+  else
+    base="https://github.com/$repo/releases/download/$tag"
+  fi
+  url="$base/$asset"
 
   if is_dry_run; then
     log_dryrun "install $bin $ver from $url -> $dest"
@@ -454,10 +483,19 @@ gh_release_install() {
     return 0
   fi
 
-  if ! http_ok "$url"; then
-    log_warn "no asset '$asset' in $repo $tag (architecture ${OS_ARCH_DPKG:-unknown}) — skipping $bin"
-    return 78
-  fi
+  local hrc=0
+  http_ok "$url" || hrc=$?
+  case $hrc in
+    0) ;;
+    1)
+      log_warn "no asset '$asset' in $repo $tag (architecture ${OS_ARCH_DPKG:-unknown}) — skipping $bin"
+      return 78
+      ;;
+    *)
+      log_error "$bin: could not reach $url (network or server error) — not installed this run"
+      return 1
+      ;;
+  esac
 
   local dl="${DEVENV_CACHE:?}/dl" ar
   ensure_dir "$dl" || return 1
@@ -478,7 +516,7 @@ gh_release_install() {
     local cfile curl_target expected
     if [ -z "$csum_url" ]; then
       csum_asset=$(expand_asset "$csum_asset" "$tag") || return 1
-      curl_target="https://github.com/$repo/releases/download/$tag/$csum_asset"
+      curl_target="$base/$csum_asset"
     else
       csum_asset=$(basename -- "$csum_url")
       curl_target=$(expand_asset "$csum_url" "$tag") || return 1
@@ -509,9 +547,25 @@ gh_release_install() {
     return 1
   fi
 
-  # 3. extract + install
-  local work found
+  # 3. extract + install, in a work directory that is removed as soon as this
+  #    one tool is in place. The archive itself stays in $DEVENV_CACHE/dl (disk);
+  #    the unpacked copy is on $TMPDIR, a tmpfs at half the RAM on Arch, Fedora and
+  #    Debian 13, and kept until the module ended it filled it: the kubernetes
+  #    module unpacks a dozen tools, velero alone 150 MB, into 980 MB (Arch lab
+  #    guest, pipeline 65219).
+  local work rc=0
   work=$(devenv_tmpdir) || return 1
+  _net_place "$ar" "$asset" "$work" "$strip" "$apath" "$bin" "$dest" "$mode" "$ver" || rc=$?
+  rm -rf -- "$work"
+  return "$rc"
+}
+
+# _net_place ARCHIVE ASSET WORK STRIP APATH BIN DEST MODE VERSION   (private)
+#   gh_release_install's last step: unpack ARCHIVE into WORK (or copy a bare
+#   binary there), find BIN in it, install it to DEST/BIN with MODE, and record
+#   the change. The caller owns WORK. Returns 1 on any failure.
+_net_place() {
+  local ar=$1 asset=$2 work=$3 strip=$4 apath=$5 bin=$6 dest=$7 mode=$8 ver=$9 found
   case $asset in
     *.tar.* | *.tgz | *.txz | *.tar | *.zip)
       if [ -n "$strip" ]; then
@@ -543,129 +597,220 @@ gh_release_install() {
   }
 
   ensure_dir "$dest" || return 1
-  if [ -d "$found" ] || [ "$(basename -- "$found")" != "$bin" ]; then
-    _fs_run_for "$dest" install -m "$mode" -- "$found" "$dest/$bin" || return 1
-  else
-    _fs_run_for "$dest" install -m "$mode" -- "$found" "$dest/" || return 1
-  fi
+  # fs_install: the same privilege gate as before, and the SELinux label of a bin
+  # directory restored afterwards (plan D9) — a no-op where SELinux is not on.
+  fs_install "$found" "$dest/$bin" "$mode" || return 1
   log_success "installed $bin $ver -> $dest/$bin"
   changed "$bin $ver"
   return 0
 }
 
-# deb_release_install REPO ASSET_PATTERN PKG VERSION [OPTS…]
-#   Installs a release .deb. Same tag resolution, token rule and checksum policy as
-#   gh_release_install, plus:
-#     --bin NAME     the command the package provides when it differs from PKG.
-#                    MUST-FIX C7: OpenBao's dpkg package is `openbao`, its binary is
-#                    `bao`, and its asset is openbao_{version}_linux_{arch_dpkg}.deb.
-#                    Getting this wrong re-downloads and re-installs on every run.
-#   Short-circuits on `dpkg-query -W -f='${Version}' PKG` matching {version}.
-#   idempotency F16: installs with `apt-get install ./file.deb`, which resolves
-#   dependencies UP FRONT and fails cleanly, instead of `dpkg -i` + `apt-get -f
-#   install -y`, which is allowed to REMOVE packages to repair a broken state.
-#   Falls back to gh_release_install when dpkg is absent or the .deb 404s.
-#   Returns 0, 78 (no asset for this arch) or 1.
-deb_release_install() {
-  local repo=${1:?deb_release_install: REPO required}
-  local pattern=${2:?deb_release_install: ASSET_PATTERN required}
-  local pkg=${3:?deb_release_install: PKG required}
-  local version=${4:?deb_release_install: VERSION required}
-  shift 4
-  local bin=$pkg passthru=() sha='' csum_asset='' csum_url='' no_verify=0 no_verify_reason=''
-  local tagfilter=''
-  local args=("$@")
-  local i=0
-  while [ $i -lt ${#args[@]} ]; do
-    case ${args[i]} in
-      --bin)
-        bin=${args[i + 1]}
-        i=$((i + 2))
-        continue
-        ;;
+# installed_pkg_version PKG
+#   Prints the version of PKG as this machine's package database records it:
+#   dpkg's ${Version} on apt (epoch and revision included — exactly what
+#   deb_release_install always compared), rpm's %{VERSION}-%{RELEASE} on dnf and
+#   zypper. Returns 1 when PKG is not installed, and on pacman, where everything
+#   this library installs from a release is an archive gated on the binary's own
+#   version instead.
+#   A query, so it lives here beside its callers rather than behind the pkg_*
+#   backends, which own every command that changes the package set.
+#   Read-only; runs under --dry-run.
+installed_pkg_version() {
+  local pkg=${1:?installed_pkg_version: PKG required} v
+  case ${OS_PKG_MGR:-apt} in
+    apt)
+      have dpkg-query || return 1
+      v=$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null) || return 1
+      ;;
+    dnf | zypper)
+      have rpm || return 1
+      v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$pkg" 2>/dev/null) || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  [ -n "$v" ] || return 1
+  printf '%s\n' "$v"
+}
+
+# pkg_release_install REPO PKG VERSION --deb PAT [--rpm PAT] [--tarball PAT] [OPTS…]
+#   Installs a tool that a release publishes as a distribution PACKAGE, through this
+#   machine's own package mechanism (spec 002 FR-015, plan D7). It replaces
+#   deb_release_install.
+#     apt          the .deb (--deb), exactly as deb_release_install did (FR-008)
+#     dnf, zypper  the .rpm (--rpm) through pkg_install_local
+#     pacman       the archive (--tarball): pacman installs no foreign package
+#   When the package asset this family takes is not in the release — no --rpm, or
+#   a 404 — the archive is installed instead, IF the call site named one.
+#   NOTHING ELSE IS EVER TRIED. The old fallbacks are gone, both of them: with no
+#   dpkg the .deb itself went to gh_release_install and was installed as
+#   /usr/local/bin/<tool> (spec 002 P3 — a "successful" run that leaves a binary
+#   that cannot execute), and a 404'd .deb became a guessed `${pattern%.deb}.tar.gz`
+#   that is wrong for grpcurl (its archive is linux_x86_64, its packages
+#   linux_amd64) and for k9s (k9s_Linux_… against k9s_linux_…). Every archive name
+#   is now written at the call site and checked against the pinned release.
+#     REPO     owner/name on GitHub: tag resolution, and the default download base
+#     PKG      the name the package database knows (openbao — not bao)
+#     VERSION  a pin from versions.env, or `latest`
+#   OPTS:
+#     --deb PAT, --rpm PAT, --tarball PAT
+#                       asset patterns, with the token rule at the top of this file
+#     --bin NAME        the command, when it differs from PKG. MUST-FIX C7: OpenBao's
+#                       package is `openbao` and its command `bao`; getting this
+#                       wrong re-installs on every run. The archive installs it.
+#     --base-url URL    as gh_release_install's: for a release not on GitHub (glab)
+#     --checksum-asset, --checksum-url, --sha256, --no-verify, --no-verify-reason,
+#     --tag-filter      as gh_release_install's; they apply to whichever asset is
+#                       installed, so one checksum file must list all of them (each
+#                       one used here was checked to)
+#     --archive-path, --strip, --dest, --version-cmd, --version-regex, --mode
+#                       passed to gh_release_install for the archive only
+#   Package path: short-circuits on installed_pkg_version PKG matching {version},
+#   so a converged box costs no network. idempotency F16: the package goes through
+#   pkg_install_local — `apt-get install ./file.deb` on apt, which resolves
+#   dependencies up front instead of `dpkg -i` + `apt-get -f install`.
+#   Archive path: gh_release_install's own version gate on BIN.
+#   Returns 0, 78 when the release has nothing this family can install (logged
+#   here, with the reason — C4: never a silent no-op), or 1.
+#   Under --dry-run it resolves and reports, and downloads nothing.
+pkg_release_install() {
+  local repo=${1:?pkg_release_install: REPO required}
+  local pkg=${2:?pkg_release_install: PKG required}
+  local version=${3:?pkg_release_install: VERSION required}
+  shift 3
+  local deb='' rpm='' tarball='' bin='' base='' tagfilter=''
+  local sha='' csum_asset='' csum_url='' no_verify=0 no_verify_reason=''
+  local verify=() archive=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --deb) deb=$2 ;;
+      --rpm) rpm=$2 ;;
+      --tarball) tarball=$2 ;;
+      --bin) bin=$2 ;;
+      --base-url) base=$2 ;;
+      --tag-filter) tagfilter=$2 ;;
       --sha256)
-        sha=${args[i + 1]}
-        passthru+=(--sha256 "${args[i + 1]}")
-        i=$((i + 2))
-        continue
+        sha=$2
+        verify+=("$1" "$2")
         ;;
       --checksum-asset)
-        csum_asset=${args[i + 1]}
-        passthru+=(--checksum-asset "${args[i + 1]}")
-        i=$((i + 2))
-        continue
+        csum_asset=$2
+        verify+=("$1" "$2")
         ;;
       --checksum-url)
-        csum_url=${args[i + 1]}
-        passthru+=(--checksum-url "${args[i + 1]}")
-        i=$((i + 2))
-        continue
-        ;;
-      --tag-filter)
-        tagfilter=${args[i + 1]}
-        passthru+=(--tag-filter "${args[i + 1]}")
-        i=$((i + 2))
-        continue
+        csum_url=$2
+        verify+=("$1" "$2")
         ;;
       --no-verify)
         no_verify=1
-        passthru+=(--no-verify)
-        i=$((i + 1))
+        verify+=("$1")
+        shift
         continue
         ;;
       --no-verify-reason)
-        no_verify_reason=${args[i + 1]}
-        passthru+=(--no-verify-reason "${args[i + 1]}")
-        i=$((i + 2))
-        continue
+        no_verify_reason=$2
+        verify+=("$1" "$2")
+        ;;
+      --archive-path | --strip | --dest | --version-cmd | --version-regex | --mode)
+        archive+=("$1" "$2")
         ;;
       *)
-        passthru+=("${args[i]}")
-        i=$((i + 1))
-        continue
+        log_error "pkg_release_install: unknown option $1"
+        return 1
         ;;
     esac
+    shift 2
   done
+  [ -n "$deb" ] || {
+    log_error "pkg_release_install: --deb is required (the asset the Debian family installs)"
+    return 1
+  }
+  [ -n "$bin" ] || bin=$pkg
 
-  if ! have dpkg || ! have dpkg-query; then
-    log_debug "dpkg is absent — installing $bin from the release archive instead"
-    gh_release_install "$repo" "$pattern" "$bin" "$version" "${passthru[@]}"
-    return
-  fi
+  local kind='' pattern=''
+  case ${OS_PKG_MGR:-apt} in
+    apt) kind=deb pattern=$deb ;;
+    dnf | zypper) if [ -n "$rpm" ]; then kind=rpm pattern=$rpm; fi ;;
+  esac
 
-  local tag ver asset url installed
+  local tag ver
   tag=$(gh_resolve_version "$repo" "$version" "$tagfilter") || {
     log_warn "could not resolve a release tag for $repo ($version) — skipping $pkg"
     return 78
   }
   ver=$(tag_to_version "$tag")
-  installed=$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null) || installed=''
-  case $installed in
-    "$ver" | "$ver"-* | *:"$ver" | *:"$ver"-*)
-      log_skip "$pkg is already $ver"
+  if [ -n "$base" ]; then
+    base=$(expand_asset "$base" "$tag") || return 1
+  else
+    base="https://github.com/$repo/releases/download/$tag"
+  fi
+
+  if [ -n "$kind" ]; then
+    local installed asset url
+    installed=$(installed_pkg_version "$pkg") || installed=''
+    case $installed in
+      "$ver" | "$ver"-* | *:"$ver" | *:"$ver"-*)
+        log_skip "$pkg is already $ver"
+        return 0
+        ;;
+    esac
+
+    asset=$(expand_asset "$pattern" "$tag") || return 1
+    url="$base/$asset"
+
+    if is_dry_run; then
+      if [ "$kind" = deb ]; then
+        log_dryrun "install $pkg $ver from $url (dpkg)"
+      else
+        log_dryrun "install $pkg $ver from $url (rpm)"
+      fi
+      changed "$pkg $ver"
       return 0
-      ;;
-  esac
+    fi
 
-  asset=$(expand_asset "$pattern" "$tag") || return 1
-  url="https://github.com/$repo/releases/download/$tag/$asset"
-
-  if is_dry_run; then
-    log_dryrun "install $pkg $ver from $url (dpkg)"
-    changed "$pkg $ver"
-    return 0
+    local hrc=0
+    http_ok "$url" || hrc=$?
+    if [ "$hrc" = 2 ]; then
+      log_error "$pkg: could not reach $url (network or server error) — not installed this run"
+      return 1
+    fi
+    if [ "$hrc" = 0 ]; then
+      local prc=0
+      _net_pkg_asset "$kind" "$pkg" "$ver" "$tag" "$base" "$asset" || prc=$?
+      # 78 is pkg_install_local saying this family installs no package file at
+      # all; the archive is then the install, as on pacman. Anything else stands.
+      if [ "$prc" != 78 ] || [ -z "$tarball" ]; then return "$prc"; fi
+      log_info "$pkg: this ${OS_PKG_MGR:-unknown} system takes no .$kind — installing the release archive"
+    elif [ -n "$tarball" ]; then
+      log_warn "no .$kind asset '$asset' in $repo $tag — falling back to the release archive"
+    else
+      log_warn "no .$kind asset '$asset' in $repo $tag, and no archive to fall back to — skipping $pkg"
+      return 78
+    fi
   fi
 
-  if ! http_ok "$url"; then
-    log_warn "no .deb asset '$asset' in $repo $tag — falling back to the release archive"
-    gh_release_install "$repo" "${pattern%.deb}.tar.gz" "$bin" "$version" "${passthru[@]}"
-    return
+  if [ -z "$tarball" ]; then
+    log_skip "$pkg: no asset of $repo $tag installs on ${OS_PKG_MGR:-this} systems (no package for it, and no usable archive)"
+    return 78
   fi
+  gh_release_install "$repo" "$tarball" "$bin" "$tag" --base-url "$base" \
+    ${verify[0]+"${verify[@]}"} ${archive[0]+"${archive[@]}"}
+}
 
-  local dl="${DEVENV_CACHE:?}/dl" ar
+# _net_pkg_asset KIND PKG VER TAG BASE ASSET   (private)
+#   The package half of pkg_release_install, once the asset is known to exist:
+#   download into the tag-keyed cache, verify with the caller's checksum options
+#   (pkg_release_install's locals — sha, csum_asset, csum_url, no_verify,
+#   no_verify_reason — read through bash's dynamic scope), install through
+#   pkg_install_local, record the change. A digest mismatch drops the cached copy,
+#   so the next run downloads again instead of re-verifying the same bad file.
+#   Returns 0, 1, or 78 when pkg_install_local says this family takes no package
+#   file at all (pacman) — the caller then installs the archive.
+_net_pkg_asset() {
+  local kind=$1 pkg=$2 ver=$3 tag=$4 base=$5 asset=$6
+  local url="$base/$asset" dl="${DEVENV_CACHE:?}/dl" ar
   ensure_dir "$dl" || return 1
-  # Keyed on the tag as well, for the reason at net_cache_path: k9s's .deb, for
-  # one, is k9s_linux_<arch>.deb in every release.
+  # Keyed on the tag as well, for the reason at net_cache_path: k9s's packages, for
+  # one, are k9s_linux_<arch>.{deb,rpm} in every release.
   ar=$(net_cache_path "$tag" "$asset")
   if [ ! -f "$ar" ]; then
     download "$url" "$ar" || return 1
@@ -681,7 +826,7 @@ deb_release_install() {
     local cfile ctarget expected
     if [ -z "$csum_url" ]; then
       csum_asset=$(expand_asset "$csum_asset" "$tag") || return 1
-      ctarget="https://github.com/$repo/releases/download/$tag/$csum_asset"
+      ctarget="$base/$csum_asset"
     else
       ctarget=$(expand_asset "$csum_url" "$tag") || return 1
       csum_asset=$(basename -- "$ctarget")
@@ -704,7 +849,13 @@ deb_release_install() {
     return 1
   fi
 
-  pkg_install_local "$ar" || return 1
+  local irc=0
+  pkg_install_local "$ar" || irc=$?
+  case $irc in
+    0) ;;
+    78) return 78 ;;
+    *) return 1 ;;
+  esac
   log_success "installed $pkg $ver"
   changed "$pkg $ver"
   return 0

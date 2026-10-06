@@ -2,10 +2,15 @@
 # meta: name=purge-desktop
 # meta: desc=one-shot report and optional removal of the desktop layer left by the old wsl2-config
 # meta: profiles=
+# meta: family=debian
 # meta: os=any
 # meta: root=yes
 #
 # NEVER in a profile. Run it explicitly:  devenv --only purge-desktop
+#
+# `family=debian` (FR-014): the old wsl2-config only ever provisioned Debian and
+# Ubuntu, so the layer this removes — and the apt source and package names it
+# removes by — exist on no other family. Elsewhere it is "not applicable".
 #
 # SPEC-ADDENDUM §5.4, under MUST-FIX S9: it REPORTS by default and removes nothing.
 # Every removal needs DEVENV_ALLOW_PKG_REMOVE=1 (`--allow-pkg-remove`) or an
@@ -50,7 +55,7 @@ BUILD_DEPS=(
 #    it, and cannot run on half the target matrix anyway.
 GUI_APPS=(brave-browser brave-keyring mpv tigervnc-viewer xtightvncviewer autocutsel)
 
-# 4. Playwright's own runtime set. `apt-mark manual` protects it BEFORE autoremove,
+# 4. Playwright's own runtime set. pkg_mark_manual protects it BEFORE autoremove,
 #    so removing Brave cannot drag fonts-liberation (a dependency of both) out with
 #    it. Both the t64 and the pre-t64 names are listed; only installed ones are used.
 PLAYWRIGHT_KEEP=(
@@ -153,8 +158,8 @@ protect_playwright() {
   [ ${#keep[@]} -gt 0 ] || return 0
   log_info "marking ${#keep[@]} Playwright runtime package(s) as manually installed"
   log_info '  so that autoremove cannot take them out with Brave'
-  run_sudo apt-mark manual "${keep[@]}" >/dev/null || {
-    log_warn 'apt-mark manual failed — NOT continuing to autoremove'
+  pkg_mark_manual "${keep[@]}" || {
+    log_warn 'marking them manual failed — NOT continuing to autoremove'
     return 1
   }
   return 0
@@ -202,6 +207,9 @@ autoremove() {
     return 0
   fi
   protect_playwright || return 0
+  # The one direct apt-get left in a module, on purpose: lib/pkg.sh removes nothing
+  # (pkg_remove/pkg_purge are report-only, MUST-FIX S9), so there is no pkg_* call
+  # for an autoremove the operator opted into — and family=debian means apt is here.
   # env-on-the-command, not exported: sudo's env_reset would drop it (see
   # lib/pkg.sh's _apt_get) and a purge could stop on a debconf prompt.
   run_sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get autoremove --purge -y || { # policy-allow: no-bare-apt

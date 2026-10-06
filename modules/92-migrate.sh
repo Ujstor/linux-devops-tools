@@ -2,6 +2,7 @@
 # meta: name=migrate
 # meta: desc=report and, with --apply, neutralise what the old wsl2-config left behind
 # meta: profiles=
+# meta: family=debian
 # meta: os=any
 # meta: root=no
 #
@@ -17,6 +18,9 @@
 #   1. lines the old scripts APPENDED to ~/.bashrc with `>>`, several of them twice
 #   2. ~/.use-nala, which redefines the `sudo` and `apt` SHELL FUNCTIONS
 #   3. picom, brave and the rest of the desktop layer            -> purge-desktop
+#
+# `family=debian` (FR-014): wsl2-config only ever provisioned Debian-family boxes,
+# so there is nothing to migrate on any other family.
 #
 # The safety rules it never breaks (MUST-FIX S3/S9):
 #   * nothing is deleted. Lines are COMMENTED OUT, prefixed so a later run skips

@@ -5,8 +5,8 @@
     "versions.env is the single pin file: ~55 KEY=value lines and nothing else in the repo pins anything. It is plain shell (sourced with `set -a`), so it has no package manifest for Renovate to read and none of Renovate's built-in managers can see it.",
     "What makes it readable is the annotation directly above each pin: `# renovate: datasource=<ds> depName=<name>`, optionally followed by `extractVersion=` and `versioning=`, then a trailing `# ...` note. The customManager below turns exactly that pair of lines into a dependency.",
     "THE ADJACENCY RULE: the annotation must be the line IMMEDIATELY above its pin, with nothing between them. The regex matches `annotation\\nKEY=value` as one unit, and tools/bump-versions.sh parses the same way, so a comment inserted between the two silently removes the pin from BOTH. Put explanatory prose ABOVE the annotation, never below it.",
-    "Every pin that cannot have a datasource carries a `# no-datasource: <why>` line in the same adjacent position instead: apt signing-key digests, boolean feature gates, branch refs, a rustup channel, a filesystem path, the k8s MINOR STREAM. Those are considered-and-rejected, not missed.",
-    "PIN VALUES THAT ARE NOT VERSIONS: `apt` means the vendor apt repo decides and `latest` means resolved at install time. Both keep their annotation so the upstream is recorded for a reader, and the packageRule below disables updates for them so Renovate never rewrites the sentinel."
+    "Every pin that cannot have a datasource carries a `# no-datasource: <why>` line in the same adjacent position instead: package signing-key digests (apt and rpm), boolean feature gates, branch refs, a rustup channel, a filesystem path, the k8s MINOR STREAM. Those are considered-and-rejected, not missed.",
+    "PIN VALUES THAT ARE NOT VERSIONS: `apt` means the vendor package repository decides (apt, dnf or zypper alike) and `latest` means resolved at install time. Both keep their annotation so the upstream is recorded for a reader, and the packageRule below disables updates for them so Renovate never rewrites the sentinel."
   ],
   "extends": [
     "config:recommended"
@@ -83,7 +83,7 @@
       "groupName": "helm plugins"
     },
     {
-      "description": "IaC and security tooling. terraform and trivy are pinned `apt` and are disabled above; they stay listed so the group is complete.",
+      "description": "IaC and security tooling. TERRAFORM_VERSION and TRIVY_VERSION are pinned `apt` and are disabled above. hashicorp/terraform still moves here through TERRAFORM_RELEASE_VERSION, the release-zip pin for a machine no HashiCorp repository serves (openSUSE Leap, a Fedora release HashiCorp has dropped).",
       "matchDepNames": [
         "hashicorp/terraform",
         "terraform-linters/tflint",
@@ -128,7 +128,7 @@
       "groupName": "shell and CLI tools"
     },
     {
-      "description": "AI agents and the Spec Kit ref. OPENCODE_VERSION is `latest` (its installer resolves the release), so this group only ever moves crush and Spec Kit.",
+      "description": "AI agents and the Spec Kit ref. OPENCODE_VERSION is `latest` (resolved at install time through the releases/latest redirect and handed to its installer as a version), so this group only ever moves crush and Spec Kit.",
       "matchDepNames": [
         "anomalyco/opencode",
         "charmbracelet/crush",

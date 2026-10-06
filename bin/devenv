@@ -43,15 +43,18 @@
 #              profiles/*.list — this key is what `devenv list` displays and what
 #              tools/gen-module-docs.sh reads. Empty means "never in a profile;
 #              run it explicitly with --only".
+#   family=    comma-separated Linux families: debian,redhat,suse,arch (default
+#              all). For a module that only MEANS something on some families;
+#              elsewhere it is reported "not applicable on the <family> family".
 #   os=        any | debian | ubuntu | wsl | !wsl | !container      (default any)
 #   arch=      comma-separated dpkg architectures, e.g. amd64,arm64 (default any)
 #   needs=     comma-separated commands that must be on PATH.       (default none)
 #   root=      yes | no. `yes` means the module calls run_sudo.     (default no)
 #
-# GATES. `module_gate` applies os → arch → needs → root before the module starts.
-# A gate that does not hold is a SKIP, never a failure: nothing is executed and the
-# summary says why. `root=yes` on a box with no usable sudo is likewise a SKIP
-# (MUST-FIX S14/P1) — this tool never demands a password up front.
+# GATES. `module_gate` applies family → os → arch → needs → root before the module
+# starts. A gate that does not hold is a SKIP, never a failure: nothing is executed
+# and the summary says why. `root=yes` on a box with no usable sudo is likewise a
+# SKIP (MUST-FIX S14/P1) — this tool never demands a password up front.
 #
 # EXIT STATUS, the whole protocol:
 #     0    did its work (or found nothing to do)
@@ -76,20 +79,29 @@
 #               `run` takes argv, never a pipeline or a redirection: build the
 #               payload in "$(devenv_tmpdir)" and install it with an argv-only
 #               command.
-#   detection   os_is_debian os_is_ubuntu os_is_wsl os_is_wsl2 os_is_container
-#               os_has_systemd os_is_headless · have CMD · version_ge A B
-#               require_arch ARCH… · the OS_* / IS_* / HAS_* contract variables
+#   detection   os_family_is FAMILY… · os_is_debian os_is_ubuntu (the Debian
+#               flavour, i.e. the archive layout) · os_is_wsl os_is_wsl2
+#               os_is_container os_has_systemd os_is_headless · have CMD
+#               version_ge A B · require_arch ARCH… · the OS_* / IS_* / HAS_*
+#               contract variables, and the family's names in FAM_* (admin group,
+#               trust store) — never hard-code a Debian path or group
 #   files       ensure_dir · write_if_changed (the default writer) · write_once
 #               write_managed · ensure_block_in_file · ensure_line_in_file
 #               symlink_file · yaml_map_merge · backup_file · manifest_record
 #               devenv_sync_repo
 #   packages    pkg_install · pkg_install_optional · pkg_install_first
-#               pkg_available · apt_or_release · pkg_conflicts_report
+#               pkg_install_local · pkg_available · pkg_upgrade_one
+#               pkg_mark_manual · pkg_ensure_addon · apt_or_release
+#               pkg_conflicts_report. Spell names the Debian way;
+#               config/packages.map translates them for the other families.
 #               pkg_remove/pkg_purge are REPORT-ONLY (MUST-FIX S9)
-#   apt repos   repo_key · repo_add · repo_ensure_docker · repo_ensure_hashicorp
-#               repo_ensure_kubernetes · repo_ensure_github_cli
-#               repo_ensure_azure_cli · repo_ensure_trivy
-#   releases    gh_release_install · deb_release_install · gh_latest_tag
+#   pkg repos   repo_key · repo_add · repo_add_rpm · repo_ensure_docker
+#               repo_ensure_hashicorp · repo_ensure_kubernetes
+#               repo_ensure_github_cli · repo_ensure_azure_cli
+#               repo_ensure_trivy — each returns 78 where the vendor publishes
+#               nothing for this family
+#   releases    gh_release_install · pkg_release_install (.deb/.rpm/archive)
+#               gh_latest_tag · http_ok (0 published, 1 absent, 2 unknown)
 #               download · verify_sha256 · sh_installer_run
 #   shell       bashrc_dropin NAME (stdin) · bashrc_ensure_hook · comp_cache
 #               comp_shim · comp_complete_c
@@ -100,9 +112,9 @@
 # THE FIVE RULES a module must not break:
 #
 #   1. EVERY mutation goes through run/run_sudo or an lib/fs.sh writer. No bare
-#      `sudo`, no bare `apt-get`, no bare `curl`, no `sed -i` under $HOME, no `>>`
-#      into a dotfile. `--dry-run` is a true no-op and tests/policy/rules.sh greps
-#      for every one of those.
+#      `sudo`, no bare package manager, no bare `curl`, no `sed -i` under $HOME,
+#      no `>>` into a dotfile. `--dry-run` is a true no-op and tests/policy/rules.sh
+#      greps for every one of those.
 #   2. IDEMPOTENT BY CONSTRUCTION. A second run must write nothing, back up
 #      nothing and print nothing. Compare before you write; version-gate before you
 #      download.
@@ -122,7 +134,7 @@
 #
 #     DEVENV_ALLOW_DOCKER_GROUP   --allow-docker-group   docker group membership
 #     DEVENV_ALLOW_WSL_CONF       --allow-wsl-conf       writing /etc/wsl.conf
-#     DEVENV_ALLOW_PKG_REMOVE     --allow-pkg-remove     removing an apt package
+#     DEVENV_ALLOW_PKG_REMOVE     --allow-pkg-remove     removing a package
 #
 # FEATURE GATES a module may read (all defined in versions.env, all off by default;
 # see `PROFILE GATES` below for the ones a profile turns on):
@@ -198,7 +210,7 @@ Options
   -n, --dry-run           print every mutating action and change nothing
   -y, --yes               answer ordinary prompts with yes (never the dangerous ones)
       --fail-fast         stop at the first failing module
-      --upgrade           allow `apt-get upgrade` (never implicit)
+      --upgrade           allow a system package upgrade (never implicit)
       --extras            turn on the optional rosters (KREW_EXTRAS, INSTALL_EXTRAS)
       --prune             remove ~/.bashrc.d fragments this repo no longer ships
       --no-prune          keep them (the default)
@@ -215,7 +227,7 @@ Options
 Explicit opt-ins for privileged, hard-to-undo steps. `--yes` does NOT imply these:
       --allow-docker-group    add your user to the docker group (root-equivalent)
       --allow-wsl-conf        let a module write /etc/wsl.conf
-      --allow-pkg-remove      let a module remove an apt package
+      --allow-pkg-remove      let a module remove a package
 
 Examples
   devenv                              # the default devops profile
@@ -582,10 +594,11 @@ cmd_install() {
 # ---------------------------------------------------------------------------
 
 cmd_list() {
-  # TSV on stdout, one row per module: name file profiles os arch needs root desc.
+  # TSV on stdout, one row per module: name file profiles os arch needs root desc
+  # family. family is last so the older columns keep their numbers.
   # The header is printed only to a terminal, so a pipe still gets clean data.
   if [ -t 1 ]; then
-    printf 'NAME\tFILE\tPROFILES\tOS\tARCH\tNEEDS\tROOT\tDESCRIPTION\n'
+    printf 'NAME\tFILE\tPROFILES\tOS\tARCH\tNEEDS\tROOT\tDESCRIPTION\tFAMILY\n'
   fi
   print_plan
 }
@@ -867,7 +880,7 @@ cmd_uninstall() {
   log_step_end
   log_step "what is left, and how to remove it"
   log_info "the checkout itself:      rm -rf $DEVENV_HOME"
-  log_info "apt packages:             none are removed by this tool; use apt yourself"
+  log_info "$(printf '%-26s' "${OS_PKG_MGR:-system} packages:")none are removed by this tool; use ${OS_PKG_MGR:-your package manager} yourself"
   log_info "release binaries:         /usr/local/bin (go, helm, k9s, neovim, starship, …)"
   log_info "krew plugins:             kubectl krew uninstall <name>   (~/.krew)"
   log_info "helm plugins:             helm plugin uninstall <name>"

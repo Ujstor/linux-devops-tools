@@ -8,7 +8,14 @@
 #
 # `os_detect` runs once at source time and exports the variable contract below.
 # It is re-runnable: point OS_RELEASE_FILE at a fixture and call it again
-# (that is how tests/unit/test_os_detect.sh works).
+# (that is how tests/unit/test_os.sh works).
+#
+# FOUR FAMILIES (spec 002). Which releases are TESTED is not written here: it is
+# config/os-support.list, the one declaration the container matrix reads too
+# (FR-002). This file only knows how to recognise a family and how to put a
+# release into the list's form. What a family CALLS things — its admin group,
+# its trust store — is data in lib/family/<family>.sh, loaded at the end of
+# os_detect (FR-007).
 
 [ -n "${_DEVENV_OS:-}" ] && return 0
 _DEVENV_OS=1
@@ -18,8 +25,22 @@ _DEVENV_OS=1
 #
 #   OS_ID                 /etc/os-release ID           debian | ubuntu | linuxmint | …
 #   OS_ID_LIKE            /etc/os-release ID_LIKE      "debian" | "ubuntu debian" | ""
-#   OS_FAMILY             always "debian" on a supported box (else "")
-#   OS_FLAVOR             debian | ubuntu — which vendor archive layout to use
+#   OS_FAMILY             debian | redhat | suse | arch, or "" (unsupported). From ID,
+#                         then ID_LIKE: debian|ubuntu, rhel|centos|fedora,
+#                         suse|opensuse|sles, arch|archlinux.
+#   OS_DISTRO             the os-release ID again, by the name config/os-support.list
+#                         uses for it: almalinux | rocky | fedora | opensuse-leap | arch …
+#   OS_RELEASE            the release in the list's form: the exact VERSION_ID for
+#                         Ubuntu (and its derivatives) and SUSE, the major for Debian
+#                         and RedHat, `rolling` for Arch and Tumbleweed. "" when the
+#                         family is unknown.
+#   OS_PKG_MGR            apt | dnf | zypper | pacman, or ""
+#   OS_SUPPORT            tested   (a row in config/os-support.list)
+#                         untested (the family is known, the release has no row)
+#                         ""       (the family is unknown: os_require_supported refuses)
+#   OS_FLAVOR             debian | ubuntu — which vendor archive layout to use.
+#                         "" off the Debian family: every Debian-only path (codenames,
+#                         deb822 suites) keys on THIS, never on OS_FAMILY.
 #   OS_CODENAME           the distro's OWN codename    bookworm | noble | faye | ""
 #   OS_UPSTREAM_CODENAME  the Debian/Ubuntu codename third-party repos publish for.
 #                         EMPTY on Debian sid/testing and on an unmappable derivative;
@@ -32,10 +53,23 @@ _DEVENV_OS=1
 #   OS_ARCH_UNAME         x86_64 aarch64 armv7l i686 ppc64le riscv64 s390x
 #   OS_ARCH_GO            amd64 arm64 arm 386 ppc64le riscv64 s390x
 #   OS_ARCH_RUST          x86_64 aarch64 armv7 i686 powerpc64le riscv64gc s390x
+#   OS_ARCH_RPM           x86_64 aarch64 armv7hl i686 ppc64le riscv64 s390x
 #   IS_WSL                0|1        WSL_VERSION       1|2|""      HAS_WSLG   0|1
 #   HAS_WSL_INTEROP       0|1        IS_CONTAINER      0|1
 #   HAS_SYSTEMD           0|1        INIT_SYSTEM       systemd|sysv|unknown
 #   IS_HEADLESS           0|1        (no usable graphical session — see _os_detect_headless)
+#
+# THE FAMILY DATA — set from lib/family/$OS_FAMILY.sh, all EMPTY on an unknown family.
+# The four files carry the identical key set (tests/unit/test_family.sh):
+#
+#   FAM_ADMIN_GROUP       the group that grants sudo          sudo | wheel
+#   FAM_CA_ANCHOR_DIR     where a local CA certificate goes   /usr/local/share/ca-certificates | …
+#   FAM_CA_REFRESH        the command that rebuilds the store update-ca-certificates | update-ca-trust | …
+#   FAM_CA_BUNDLE         the bundle that store produces      /etc/ssl/certs/ca-certificates.crt | …
+#   FAM_PKG_QUERY         the package database's query tool   dpkg-query | rpm | pacman
+#   FAM_MAC               mandatory access control in force   none | selinux
+#   FAM_PKG_FINGERPRINT   a command line (for eval) printing one "name version" per
+#                         installed package — what the container test diffs
 #
 # ARCHITECTURE SUPPORT (MUST-FIX P7). The mapping below is complete and correct for
 # every Debian architecture, and `require_arch` exists so a module can gate on it.
@@ -191,7 +225,17 @@ _os_detect_arch() {
     s390x) OS_ARCH_GO=s390x OS_ARCH_RUST=s390x ;;
     *) OS_ARCH_GO=$OS_ARCH_DPKG OS_ARCH_RUST=$OS_ARCH_UNAME ;;
   esac
-  export OS_ARCH_DPKG OS_ARCH_UNAME OS_ARCH_GO OS_ARCH_RUST
+  # The rpm spelling (an .rpm asset's name, dnf's $basearch). Derived from the
+  # same source of truth, so a 32-bit userland gets a 32-bit package here too.
+  case $OS_ARCH_DPKG in
+    amd64) OS_ARCH_RPM=x86_64 ;;
+    arm64) OS_ARCH_RPM=aarch64 ;;
+    armhf) OS_ARCH_RPM=armv7hl ;;
+    i386) OS_ARCH_RPM=i686 ;;
+    ppc64el) OS_ARCH_RPM=ppc64le ;;
+    *) OS_ARCH_RPM=$OS_ARCH_UNAME ;;
+  esac
+  export OS_ARCH_DPKG OS_ARCH_UNAME OS_ARCH_GO OS_ARCH_RUST OS_ARCH_RPM
 }
 
 # _os_detect_platform  (private) — sets IS_WSL/WSL_VERSION/HAS_WSLG/HAS_WSL_INTEROP/
@@ -272,6 +316,135 @@ _os_detect_headless() {
   export IS_HEADLESS
 }
 
+# The keys every lib/family/<family>.sh defines. One list, so os_detect can empty
+# them on an unknown family and tests/unit/test_family.sh can hold the files to it.
+_OS_FAM_KEYS=(FAM_ADMIN_GROUP FAM_CA_ANCHOR_DIR FAM_CA_REFRESH FAM_CA_BUNDLE
+  FAM_PKG_QUERY FAM_MAC FAM_PKG_FINGERPRINT)
+
+# os_support_rows [FAMILY]
+#   Prints the rows of config/os-support.list (DEVENV_OS_SUPPORT_LIST overrides the
+#   path), one "family distro release image lab" per line, single-spaced, with
+#   comments, blank lines and short rows dropped — only FAMILY's rows when given.
+#   Returns 1 when the list cannot be read. Read-only; runs under --dry-run.
+os_support_rows() {
+  local want=${1:-} file=${DEVENV_OS_SUPPORT_LIST:-${DEVENV_HOME:-.}/config/os-support.list}
+  local line f d r i l _rest
+  [ -r "$file" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%%#*}
+    read -r f d r i l _rest <<<"$line"
+    [ -n "$l" ] || continue
+    [ -z "$want" ] || [ "$f" = "$want" ] || continue
+    printf '%s %s %s %s %s\n' "$f" "$d" "$r" "$i" "$l"
+  done <"$file"
+  return 0
+}
+
+# _os_support_render FAMILY [DISTRO]  (private)
+#   Prints FAMILY's tested releases on one line, grouped by distro —
+#   "debian 12, 13 · ubuntu 22.04, 24.04, 26.04" — or only DISTRO's. Prints
+#   nothing (returns 1) when there are none.
+_os_support_render() {
+  local fam=${1:?} only=${2:-} f d r _rest cur='' out=''
+  while read -r f d r _rest; do
+    [ -z "$only" ] || [ "$d" = "$only" ] || continue
+    if [ "$d" = "$cur" ]; then
+      out="$out, $r"
+    else
+      out="${out:+$out · }$d $r"
+      cur=$d
+    fi
+  done < <(os_support_rows "$fam")
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
+# _os_family_of TOKEN  (private)
+#   The family an os-release ID or ID_LIKE token names: prints debian | redhat |
+#   suse | arch, returns 1 for anything else. The host automation's mapping.
+_os_family_of() {
+  case ${1:-} in
+    debian | ubuntu) printf 'debian\n' ;;
+    rhel | centos | fedora) printf 'redhat\n' ;;
+    suse | opensuse | opensuse-* | sles) printf 'suse\n' ;;
+    arch | archlinux) printf 'arch\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# _os_detect_family  (private) — sets OS_FAMILY OS_DISTRO OS_RELEASE OS_PKG_MGR
+#   OS_SUPPORT from what os_detect already read, then loads the family's data.
+_os_detect_family() {
+  local fam='' tok f d r _rest
+  local -a toks=()
+  if [ -n "$OS_FLAVOR" ]; then
+    # Exactly the rule this family has always had — whatever earns a Debian or
+    # Ubuntu flavour IS the Debian family — so no Debian box changes (FR-008).
+    fam=debian
+  else
+    # ID first: a distribution's own name outranks what it says it is like.
+    read -r -a toks <<<"$OS_ID $OS_ID_LIKE"
+    for tok in ${toks[@]+"${toks[@]}"}; do
+      fam=$(_os_family_of "$tok") && break
+      fam=''
+    done
+  fi
+
+  OS_FAMILY=$fam
+  OS_DISTRO=$OS_ID
+  OS_RELEASE='' OS_PKG_MGR='' OS_SUPPORT=''
+  case $fam in
+    debian)
+      OS_PKG_MGR=apt
+      OS_RELEASE=$OS_VERSION_MAJOR
+      [ "$OS_FLAVOR" = ubuntu ] && OS_RELEASE=$OS_VERSION_ID
+      ;;
+    redhat)
+      OS_PKG_MGR=dnf
+      OS_RELEASE=$OS_VERSION_MAJOR
+      ;;
+    suse)
+      OS_PKG_MGR=zypper
+      # Tumbleweed's VERSION_ID is a snapshot date, not a release.
+      case $OS_ID in
+        opensuse-tumbleweed | opensuse-slowroll) OS_RELEASE=rolling ;;
+        *) OS_RELEASE=$OS_VERSION_ID ;;
+      esac
+      ;;
+    arch)
+      OS_PKG_MGR=pacman
+      # The archlinux image stamps a build date into VERSION_ID; the release is
+      # the same rolling one either way.
+      OS_RELEASE=rolling
+      ;;
+  esac
+
+  if [ -n "$fam" ]; then
+    OS_SUPPORT=untested
+    while read -r f d r _rest; do
+      if [ "$d" = "$OS_DISTRO" ] && [ "$r" = "$OS_RELEASE" ]; then
+        OS_SUPPORT=tested
+        break
+      fi
+    done < <(os_support_rows "$fam")
+  fi
+
+  # The family's names. Emptied first, so an unknown family leaves every FAM_*
+  # defined and empty, and a re-detection never inherits the previous family's.
+  local k file="${DEVENV_HOME:-.}/lib/family/$fam.sh"
+  for k in "${_OS_FAM_KEYS[@]}"; do
+    printf -v "$k" '%s' ''
+  done
+  if [ -n "$fam" ] && [ -r "$file" ]; then
+    # shellcheck source=lib/family/debian.sh
+    . "$file"
+  fi
+  for k in "${_OS_FAM_KEYS[@]}"; do
+    export "${k?}"
+  done
+  export OS_FAMILY OS_DISTRO OS_RELEASE OS_PKG_MGR OS_SUPPORT
+}
+
 # os_detect
 #   Args: none. Reads ${OS_RELEASE_FILE:-/etc/os-release}.
 #   Sets and exports the whole variable contract above. Called once at source time
@@ -334,8 +507,7 @@ os_detect() {
     case $OS_PRETTY in *sid*) OS_CODENAME=sid ;; esac
   fi
 
-  OS_FAMILY=''
-  [ -n "$OS_FLAVOR" ] && OS_FAMILY=debian
+  _os_detect_family
 
   OS_LIBC=''
   if have getconf; then
@@ -349,7 +521,7 @@ os_detect() {
   _os_detect_platform
   _os_detect_headless
 
-  export OS_ID OS_ID_LIKE OS_FAMILY OS_FLAVOR OS_CODENAME OS_UPSTREAM_CODENAME
+  export OS_ID OS_ID_LIKE OS_FLAVOR OS_CODENAME OS_UPSTREAM_CODENAME
   export OS_VERSION_ID OS_VERSION_MAJOR OS_PRETTY OS_LIBC
   return 0
 }
@@ -361,6 +533,20 @@ os_detect() {
 # os_is_ubuntu / os_is_debian  — which vendor archive layout applies.
 os_is_ubuntu() { [ "${OS_FLAVOR:-}" = ubuntu ]; }
 os_is_debian() { [ "${OS_FLAVOR:-}" = debian ]; }
+
+# os_family_is FAMILY…
+#   Returns 0 when OS_FAMILY is one of the arguments (debian | redhat | suse |
+#   arch), 1 otherwise — and always 1 on an unknown family. Safe inside `if`.
+#   Not to be confused with os_is_debian, which is the Debian *flavour* (the
+#   archive layout), false on Ubuntu.
+os_family_is() {
+  local f
+  [ -n "${OS_FAMILY:-}" ] || return 1
+  for f in "$@"; do
+    [ "$f" = "$OS_FAMILY" ] && return 0
+  done
+  return 1
+}
 # os_is_wsl / os_is_wsl2 / os_has_wslg
 os_is_wsl() { [ "${IS_WSL:-0}" = 1 ]; }
 os_is_wsl2() { [ "${IS_WSL:-0}" = 1 ] && [ "${WSL_VERSION:-}" = 2 ]; }
@@ -392,21 +578,65 @@ os_upstream_ge() {
   [ "$ra" -ge "$rb" ]
 }
 
+# _os_untested_notice  (private)
+#   FR-003's notice: ONE line, once per run. preflight and doctor both ask, and both
+#   run in a default profile, so the first asker leaves "<distro> <release>" in
+#   $DEVENV_RUNDIR (which every child module of the run shares) and a later one with
+#   the same answer stays quiet. Outside a run — no run directory — it always speaks.
+#   Names the nearest tested releases: the same distro's, else the family's.
+_os_untested_notice() {
+  local key="${OS_DISTRO:-?} ${OS_RELEASE:-?}" stamp='' seen='' near
+  if [ -n "${DEVENV_RUNDIR:-}" ] && [ -d "${DEVENV_RUNDIR:-}" ]; then
+    stamp="$DEVENV_RUNDIR/os-untested"
+    [ -r "$stamp" ] && { read -r seen <"$stamp" || seen=''; }
+    [ "$seen" = "$key" ] && return 0
+  fi
+  if near=$(_os_support_render "$OS_FAMILY" "$OS_DISTRO"); then
+    near="the tested ${OS_DISTRO} releases are ${near#"$OS_DISTRO "}"
+  elif near=$(_os_support_render "$OS_FAMILY"); then
+    near="the tested ${OS_FAMILY}-family releases are $near"
+  else
+    near="no ${OS_FAMILY}-family release is tested"
+  fi
+  log_warn "untested release: ${OS_PRETTY:-$OS_DISTRO} (${OS_DISTRO:-?} ${OS_RELEASE:-?}) runs as the ${OS_FAMILY} family — $near"
+  if [ -n "$stamp" ]; then
+    printf '%s\n' "$key" >"$stamp" 2>/dev/null || :
+  fi
+  return 0
+}
+
 # os_require_supported
 #   Args: none.
-#   Returns 0 on a Debian-family box. Returns 1 with a clear, actionable message
-#   on anything else — 00-preflight turns that into a `die`.
+#   The run-time gate (FR-003/FR-004), driven by config/os-support.list:
+#     tested    returns 0, silently
+#     untested  returns 0 after exactly ONE warning naming the nearest tested
+#               releases — once per run, however many modules ask
+#     unknown   returns 1 after a refusal that lists every family and every tested
+#               release, rendered from the list. 00-preflight turns that into a `die`
+#               before any change.
 #   RECONCILIATION: SPEC 5.3.3 also made a codename-less box fatal. SPEC 5.3.3's own
 #   sid/testing rule ("every repo takes its unpublished branch") presupposes the run
 #   continues, so a Debian-family box with no upstream codename gets ONE warning and
-#   returns 0. Set DEVENV_REQUIRE_CODENAME=1 to make it fatal instead.
+#   returns 0. Set DEVENV_REQUIRE_CODENAME=1 to make it fatal instead. The other
+#   families have no codename ladder, so this applies to the Debian family only.
 os_require_supported() {
   if [ -z "${OS_FAMILY:-}" ]; then
-    log_error "unsupported distribution: ${OS_PRETTY:-${OS_ID:-unknown}}"
-    log_error "linux-devops-tools targets Debian 12/13 and Ubuntu 22.04/24.04 (and Debian-family derivatives)."
+    local fam seen=' ' f _rest line
+    log_error "unsupported distribution: ${OS_PRETTY:-${OS_ID:-unknown}} (ID=${OS_ID:-none}, ID_LIKE=${OS_ID_LIKE:-none})"
+    log_error "linux-devops-tools runs on four Linux families; these releases are tested:"
+    while read -r f _rest; do
+      case $seen in *" $f "*) continue ;; esac
+      seen="$seen$f "
+      line=$(_os_support_render "$f") || continue
+      fam=$(printf '%-7s' "$f")
+      log_error "  $fam $line"
+    done < <(os_support_rows)
+    [ "$seen" != ' ' ] || log_error "  (the list of supported releases, config/os-support.list, could not be read)"
+    log_error "A derivative runs, untested, when its /etc/os-release names one of these families in ID or ID_LIKE."
     return 1
   fi
-  if [ -z "${OS_UPSTREAM_CODENAME:-}" ]; then
+  [ "${OS_SUPPORT:-}" = tested ] || _os_untested_notice
+  if [ "$OS_FAMILY" = debian ] && [ -z "${OS_UPSTREAM_CODENAME:-}" ]; then
     log_warn "no upstream ${OS_FLAVOR} codename for '${OS_CODENAME:-unknown}' — third-party apt repos will be skipped"
     if [ "${DEVENV_REQUIRE_CODENAME:-0}" = 1 ]; then
       log_error "DEVENV_REQUIRE_CODENAME=1 and no upstream codename could be resolved"
@@ -419,7 +649,7 @@ os_require_supported() {
 # os_summary
 #   Args: none. Prints four log lines describing the box. Always 0.
 os_summary() {
-  log_info "distro   ${OS_PRETTY:-unknown} (id=${OS_ID:-?} flavor=${OS_FLAVOR:-?})"
+  log_info "distro   ${OS_PRETTY:-unknown} (id=${OS_ID:-?} flavor=${OS_FLAVOR:-?} family=${OS_FAMILY:-?} release=${OS_RELEASE:-?} ${OS_SUPPORT:-unsupported} pkg=${OS_PKG_MGR:-?})"
   log_info "codename ${OS_CODENAME:-none} -> upstream ${OS_UPSTREAM_CODENAME:-none}  libc ${OS_LIBC:-?}"
   log_info "arch     dpkg=${OS_ARCH_DPKG:-?} go=${OS_ARCH_GO:-?} uname=${OS_ARCH_UNAME:-?}"
   log_info "platform wsl=${IS_WSL:-0}${WSL_VERSION:+v$WSL_VERSION} wslg=${HAS_WSLG:-0} container=${IS_CONTAINER:-0} init=${INIT_SYSTEM:-?} headless=${IS_HEADLESS:-?}"

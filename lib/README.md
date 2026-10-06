@@ -55,26 +55,42 @@ Rules that hold in every library file:
 |---|---|---|
 | `common.sh` | entry point, globals, scratch dirs, `versions.env`, traps | `common.sh` |
 | `log.sh` | `log_*`, `die`, `skip`, colour | `log.sh` |
-| `os.sh` | distro/arch/platform detection, the `OS_*`/`IS_*` contract | `os.sh` |
+| `os.sh` | distro/arch/platform detection, the `OS_*`/`IS_*` contract, the family (`OS_FAMILY`, `OS_PKG_MGR`, …) and the tested/untested/refused gate read from `config/os-support.list` | `os.sh` |
+| `family/<family>.sh` | **data**: the family's names as `FAM_*` (admin group, CA store, package query, MAC). Sourced by `os.sh` after detection, never by anything else | new (spec 002) |
 | `run.sh` | **the `--dry-run` gate**, `run`/`run_sudo`, sudo, `confirm`, `changed` | split out of `log.sh` + `os.sh` |
-| `fs.sh` | every filesystem mutation, blocks, backups, manifest, YAML merge | `fs.sh` |
-| `net.sh` | downloads, checksums, release-tag resolution, binary/`.deb` installs | `github.sh` |
-| `pkg.sh` | the one apt policy | `pkg.sh` |
-| `repo.sh` | deb822 sources, armored keyrings, suite resolution, per-vendor | `repo.sh` |
+| `fs.sh` | every filesystem mutation, blocks, backups, manifest, YAML merge, `fs_install` (SELinux relabel) | `fs.sh` |
+| `net.sh` | downloads, checksums, release-tag resolution, binary installs, `pkg_release_install` (`.deb` / `.rpm` / archive per family — it replaced `deb_release_install`), the three-valued `http_ok` | `github.sh` |
+| `pkg.sh` | the one package policy on every family: name translation through `config/packages.map`, then dispatch to a backend | `pkg.sh` |
+| `pkg_apt.sh` · `pkg_dnf.sh` · `pkg_zypper.sh` · `pkg_pacman.sh` | the backends: the **only** files that run a package manager. Sourced by `pkg.sh` | new (spec 002) |
+| `repo.sh` | vendor repositories: deb822 sources and armored keyrings on Debian, `.repo` files and `rpm --import` on RedHat/SUSE, suite resolution, per-vendor | `repo.sh` |
 | `extrepo.sh` | the declarative list of external **git config** repos: `extrepo`, `extrepo_sync_module`, the symlink policy | new |
 | `shell.sh` | `~/.bashrc` hook, `~/.bashrc.d` drop-ins, the completion cache | `shell.sh` |
 | `lang.sh` | go / cargo / uv / npm / helm-plugin / helm-repo / krew install helpers | `lang.sh` |
 | `wsl.sh` | `/etc/wsl.conf` additive merge, WSL helpers | `wsl.sh` |
-| `registry.sh` | module discovery, `# meta:` parsing, plan, run, summary | `registry.sh` |
+| `registry.sh` | module discovery, `# meta:` parsing (`family=` included), plan, run, summary | `registry.sh` |
 
 Two files are named differently from SPEC §5.3: `run.sh` holds the mutation gate that
 SPEC listed under `log.sh`/`os.sh`, and `net.sh` is SPEC's `github.sh` (it also owns
 the generic download path and `sh_installer_run`, neither of which is GitHub-specific).
-**Every function name is exactly as SPEC §5.3 specifies**, and nothing outside `lib/`
-sources a library file by name, so the split is invisible to callers.
+**Every function name is exactly as SPEC §5.3 specifies** — except `deb_release_install`,
+which spec 002 replaced with `pkg_release_install` — and nothing outside `lib/` sources a
+library file by name, so the split is invisible to callers.
 
 `lib/awk/` holds standalone awk programs (`k9s-set-skin.awk`) and is not part of this
 API.
+
+`lib/family/*.sh` break two of the header rules on purpose: they have **no include guard**
+(`os_detect` re-sources one on every detection, so a re-detection replaces every value) and they
+hold nothing but `FAM_*` assignments and comments — no function, no command. All four define the
+identical key set with no empty value; `tests/unit/test_family.sh` and the `lib-shape` rule
+enforce both.
+
+Data the library reads, besides `versions.env`:
+
+| file | read by | what |
+|---|---|---|
+| `config/os-support.list` (`DEVENV_OS_SUPPORT_LIST`) | `os.sh` | the tested releases: `family distro release image lab` |
+| `config/packages.map` (`DEVENV_PKG_MAP`) | `pkg.sh` | each Debian package name on the other three families. Never read on apt |
 
 ## The two scratch areas
 
@@ -141,16 +157,20 @@ through an explicit interpreter (`bash "$script"`).
 4. **Sudo is lazy.** Nothing asks for a password until a module that needs root
    actually runs. Running as root works. A box without `sudo` gets an actionable
    message and a skip, not an obscure failure.
-5. **Supply chain.** Release binaries are SHA256-verified, or carry an explicit
-   `--no-verify --no-verify-reason '<why>'`. Apt keys are validated before install and
-   repaired when corrupt. `gpg` is never required.
+5. **Supply chain.** Release binaries and packages are SHA256-verified, or carry an
+   explicit `--no-verify --no-verify-reason '<why>'`. Signing keys — apt and rpm — are
+   validated before install and repaired when corrupt; rpm keys are imported explicitly
+   (already-trusted is checked by fingerprint), never auto-trusted by dnf or zypper.
+   `gpg` is never required, on any family.
 6. **No `/etc/os-release` in anyone's shell.** It is parsed key by key, never sourced.
+7. **One package policy.** Only `lib/pkg_<mgr>.sh` runs a package manager (and `lib/repo.sh`
+   imports rpm keys). pacman never syncs without upgrading.
 
 ## Architecture support
 
-`OS_ARCH_DPKG` (from `dpkg --print-architecture`) is the source of truth, and
-`OS_ARCH_{GO,UNAME,RUST}` are derived from it, correctly, for every Debian
-architecture. **Only `amd64` / `x86_64` is tested.** `arm64` is best-effort: where an
+`OS_ARCH_DPKG` (from `dpkg --print-architecture`, or mapped from `uname -m` where there is
+no dpkg) is the source of truth, and `OS_ARCH_{GO,UNAME,RUST,RPM}` are derived from it,
+correctly, for every Debian architecture. **Only `amd64` / `x86_64` is tested.** `arm64` is best-effort: where an
 upstream publishes no arm64 asset, `gh_release_install` returns **78** and the module
 logs a skip — it never silently installs nothing. Nothing beyond that is claimed.
 

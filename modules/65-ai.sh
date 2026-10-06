@@ -96,15 +96,34 @@ report_npm_claude() {
 #   module the same way a failed Claude Code install does.
 install_opencode() {
   if have opencode || [ -x "$OPENCODE_BIN/opencode" ]; then
-    local v=''
-    v=$(bin_version "$OPENCODE_BIN/opencode" --version 2>/dev/null) || v=''
+    local v='' scratch
+    # `opencode --version` creates ~/.config/opencode and ~/.local/{share,state}/
+    # opencode on its first start, so a second run that only REPORTS the version
+    # changed the home directory (fedora:44, pipeline 65171). The probe gets a
+    # throwaway HOME and XDG tree under the run's scratch directory.
+    scratch=$(devenv_tmpdir 2>/dev/null) || scratch=''
+    if [ -n "$scratch" ]; then
+      v=$(HOME="$scratch" XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
+        XDG_STATE_HOME="$scratch/state" XDG_CACHE_HOME="$scratch/cache" \
+        bin_version "$OPENCODE_BIN/opencode" --version 2>/dev/null) || v=''
+    fi
     log_skip "opencode is already installed${v:+ ($v)} — 'opencode upgrade' moves it, so this repo leaves it alone"
     return 0
   fi
-  local args=(--no-modify-path)
-  case ${OPENCODE_VERSION:-latest} in
-    latest | '') ;;
-    *) args+=(--version "${OPENCODE_VERSION#v}") ;;
+  local args=(--no-modify-path) want=${OPENCODE_VERSION:-latest} tag
+  # `latest` is resolved HERE, through github.com/<repo>/releases/latest — a
+  # redirect, not the API. Left to itself the installer asks api.github.com,
+  # whose unauthenticated limit is 60 requests an hour per address: thirteen CI
+  # jobs behind one egress address exhausted it and the installer died with
+  # "Failed to fetch version information" (pipeline 65170, Fedora 43/44). A
+  # failed resolution falls back to the installer's own lookup.
+  case $want in
+    latest | '')
+      if ! is_dry_run && tag=$(gh_latest_tag anomalyco/opencode 2>/dev/null) && [ -n "$tag" ]; then
+        args+=(--version "${tag#v}")
+      fi
+      ;;
+    *) args+=(--version "${want#v}") ;;
   esac
   # --no-modify-path: the installer would otherwise append its PATH line to
   # ~/.bashrc and ~/.zshrc. ~/.bashrc.d/70-tools.sh already adds

@@ -95,7 +95,15 @@ go_install() {
   fi
   log_info "go install $spec"
   ensure_dir "$(dirname -- "$state")" || return 1
-  run env GOFLAGS=-mod=mod GOBIN= go install "$spec" || {
+  # The build's work directory goes to the disk-backed exec scratch, never the
+  # default $TMPDIR: Fedora and Arch mount /tmp as tmpfs at half the RAM, and on a
+  # small machine (a 929 MB Fedora 44 lab guest) compiling hcloud filled it — "no
+  # space left on device", and every later write to /tmp in the run failed too.
+  local -a goenv=(GOFLAGS=-mod=mod GOBIN=)
+  local gotmp=''
+  gotmp=$(devenv_execdir 2>/dev/null) || gotmp=''
+  if [ -n "$gotmp" ]; then goenv+=("GOTMPDIR=$gotmp"); fi
+  run env "${goenv[@]}" go install "$spec" || {
     log_error "go install $spec failed"
     return 1
   }
@@ -303,7 +311,9 @@ helm_plugin_ensure() {
   # here is a git URL pinned by tag — what Helm 3 installed with no verification
   # at all — so --verify=false keeps that parity. Probed rather than matched on
   # the version: Helm 3 does not know the flag and rejects it.
-  if helm plugin install --help 2>/dev/null | grep -qE '^[[:space:]]+--verify[[:space:]]'; then
+  local help
+  help=$(helm plugin install --help 2>/dev/null) || help=''
+  if printf '%s\n' "$help" | awk '/^[[:space:]]+--verify[[:space:]]/ { f = 1 } END { exit !f }'; then
     args+=(--verify=false)
   fi
   run helm plugin install "${args[@]}" </dev/null || log_warn "helm plugin install $label failed"

@@ -8,6 +8,7 @@ mechanisms, tooling — lives in [plan.md](plan.md). If a sentence here names a 
 | Status | **implemented** (the repository is the derived artifact of this spec) |
 | Written | 2026-09-10 |
 | Supersedes | the ad-hoc provisioning scripts of the predecessor repository |
+| Amended by | [002](../002-multi-distro-support/spec.md): N-02, FR-006, FR-007, SC-003, SC-014, A-01 and the last out-of-scope line — four Linux families, thirteen tested releases |
 | Source of truth for intent | **this file**. For behaviour: the code, mapped in [plan.md](plan.md) |
 
 ---
@@ -54,7 +55,7 @@ tool was installed by hand.
 | # | Not a goal | Why |
 |---|---|---|
 | N-01 | Configuration management for a fleet | This provisions the operator's own machine. Fleet hosts are described elsewhere. |
-| N-02 | Supporting distribution families beyond the two named | An unsupported machine must be refused clearly, not half-served. |
+| N-02 | Supporting distribution families beyond the two named | An unsupported machine must be refused clearly, not half-served. *Amended by [002](../002-multi-distro-support/spec.md).* |
 | N-03 | Keeping installed tools up to date over time | Installing is a decision; upgrading is a different one, and self-updating tools must be left alone. |
 | N-04 | Being the operator's dotfiles | Personal shell configuration stays the operator's, in their own files, and must survive every run untouched. |
 | N-05 | A graphical desktop, in any optional form | G-04. Removed, not made optional. |
@@ -122,9 +123,9 @@ and the gate itself is proven to still fire.
 - **FR-005** The environment must determine the distribution, release, host platform and
   processor architecture at run time. The operator must never have to declare them.
 - **FR-006** Where the two supported distributions genuinely differ, the environment must resolve
-  the difference itself; no per-distribution manual step may be required.
+  the difference itself; no per-distribution manual step may be required. *Amended by [002](../002-multi-distro-support/spec.md).*
 - **FR-007** On a machine outside the supported family, the environment must refuse with a message
-  naming the reason and must change nothing.
+  naming the reason and must change nothing. *Amended by [002](../002-multi-distro-support/spec.md).*
 - **FR-008** A capability with no artifact for the current platform or architecture must be
   recorded as a skip with a reason. It must never fail the run and must never silently install
   nothing.
@@ -211,7 +212,7 @@ Measurable, and every one of them is checked by automation unless stated otherwi
 |---|---|
 | **SC-001** | A second run leaves the machine byte-identical: a fingerprint of installed packages, shell configuration, package sources and both binary directories is unchanged. |
 | **SC-002** | A preview run leaves that same fingerprint unchanged, measured *before* the preview and again after. |
-| **SC-003** | The environment installs on **both supported distributions**, across four supported releases, with **no per-distribution manual step**. |
+| **SC-003** | The environment installs on **both supported distributions**, across four supported releases, with **no per-distribution manual step**. *Amended by [002](../002-multi-distro-support/spec.md).* |
 | **SC-004** | Loading the shell configuration twice in one session produces no duplicated entry in the executable search path. |
 | **SC-005** | Every tool in the pre-rework machine inventory resolves to either an installing unit or an exclusion entry with a reason. Unexplained entries: **zero**. |
 | **SC-006** | The cluster-client layer ships **57 plugins, 10 shortcuts, 64 aliases and 4 themes**, with no shortcut bound twice, no shortcut colliding with one the client itself defines, and no shortcut that depends on the operator's keyboard layout. |
@@ -222,14 +223,14 @@ Measurable, and every one of them is checked by automation unless stated otherwi
 | **SC-011** | No elevation is requested before the first step that needs it; on a machine with no elevation path the run completes successfully with those steps recorded as skips. |
 | **SC-012** | Removal leaves no file the environment owns and deletes no file the operator edited; both counts are reported. |
 | **SC-013** | Starting an interactive shell costs under 0.20 s on the reference machine, against a 0.57 s baseline before the rework. |
-| **SC-014** | On an unsupported distribution the run exits with a message naming the reason and the machine fingerprint is unchanged. |
+| **SC-014** | On an unsupported distribution the run exits with a message naming the reason and the machine fingerprint is unchanged. *Amended by [002](../002-multi-distro-support/spec.md).* |
 | **SC-015** | Every artifact fetched from the network is either digest-verified or carries a recorded exception; a run with an unverifiable artifact and no recorded exception fails. |
 
 ## Assumptions
 
 | # | Assumption | If it is wrong |
 |---|---|---|
-| A-01 | The machine runs one of the two supported distribution families and has network access to public package archives and release hosts. | FR-007 refuses it. |
+| A-01 | The machine runs one of the two supported distribution families and has network access to public package archives and release hosts. *Amended by [002](../002-multi-distro-support/spec.md).* | FR-007 refuses it. |
 | A-02 | The operator has an elevation path, or is the superuser. | FR-016 degrades to skips rather than failing. |
 | A-03 | The processor architecture is the primary one the environment is tested on; a secondary architecture is best-effort. | FR-008 records skips where an upstream publishes no artifact. |
 | A-04 | The operator's own shell configuration may already be managed by another repository, possibly through a symlink. | FR-012/FR-013 must write through it, never replace it. This is not hypothetical: it is exactly what P3 destroyed. |
@@ -245,4 +246,4 @@ Measurable, and every one of them is checked by automation unless stated otherwi
 - Managing the operator's cluster credential files or merging them.
 - Managing the external repositories that own the operator's editor, multiplexer and prompt
   configuration; the environment may place them and must never edit them.
-- Distribution families outside the two supported ones.
+- Distribution families outside the two supported ones. *Amended by [002](../002-multi-distro-support/spec.md).*

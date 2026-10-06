@@ -9,13 +9,16 @@
 #
 # modules/45-cloud.sh — the CLIs that talk to somebody else's machines.
 #
-#   gh          GitHub CLI, vendor apt repository, suite literally `stable`
+#   gh          GitHub CLI, vendor apt repository, suite literally `stable`; the
+#               vendor's rpm repository on redhat and suse, Arch's `github-cli`
 #   glab        GitLab CLI. Released on GITLAB.COM, not GitHub: the GitHub
-#               releases feed for gitlab-org/cli is empty, which is why this
-#               module has its own downloader instead of deb_release_install.
+#               releases feed for gitlab-org/cli is empty, so the tag comes from
+#               GitLab's own API and pkg_release_install downloads from the
+#               release's /downloads (--base-url): .deb, .rpm, or the archive.
 #   az          azure-cli from packages.microsoft.com, with the K12 suite map and
 #               a `uv tool install azure-cli` fallback when Microsoft publishes
-#               nothing usable for this release.
+#               nothing usable for this release — which is Fedora, Leap and Arch
+#               (plan D6); EL 9/10 take Microsoft's rhel/<major>/prod repository.
 #   hcloud      Hetzner Cloud CLI (go install — half the fleet is Hetzner)
 #   crane       go-containerregistry's registry CLI (go install)
 #   diagnostics dig, mtr, traceroute, nmap, tcpdump, ping, htpasswd, wireguard
@@ -105,6 +108,9 @@ _path_prepend() {
 # _cloud_gh
 #   GitHub CLI. `repo_ensure_github_cli` also drops the /usr/share/keyrings copy
 #   the vendor's own instructions create, so there is one trusted key, not two.
+#   78 off the Debian family is arch, where no vendor repository exists:
+#   pkg_install gh then takes the distribution's package (packages.map spells it
+#   github-cli there).
 #   Always returns 0.
 _cloud_gh() {
   local rc=0
@@ -113,13 +119,15 @@ _cloud_gh() {
     return 0
   fi
   if have gh; then
-    log_warn "gh is on PATH at $(command -v gh) but is not an apt package —"
+    log_warn "gh is on PATH at $(command -v gh) but no ${OS_PKG_MGR:-apt} package owns it —"
     log_warn "  leaving it alone rather than installing a second copy."
     return 0
   fi
   repo_ensure_github_cli || rc=$?
-  if [ "$rc" != 0 ]; then
-    log_warn "the github-cli apt repository could not be configured — skipping gh"
+  if [ "$rc" = 78 ] && [ "${OS_FAMILY:-debian}" != debian ]; then
+    : # no vendor repository here: pkg_install below takes the distribution's gh
+  elif [ "$rc" != 0 ]; then
+    log_warn "the github-cli ${OS_PKG_MGR:-apt} repository could not be configured — skipping gh"
     return 0
   fi
   # The index must be refreshed before availability is checked — see the note
@@ -172,12 +180,13 @@ _cloud_glab_arch() {
 }
 
 # _cloud_glab
-#   Installs glab from gitlab.com: the .deb when dpkg is available, else the
-#   tarball into /usr/local/bin. Both are verified against the release's own
-#   checksums.txt. Version-gated on `glab --version`, so a converged box does no
-#   network at all. Honours --dry-run. Always returns 0.
+#   Installs glab from gitlab.com through pkg_release_install: the .deb on apt,
+#   the .rpm on dnf and zypper, the archive's bin/glab into /usr/local/bin on
+#   pacman. All three are verified against the release's own checksums.txt, which
+#   lists them (checked for v1.120.0). Version-gated on `glab --version` first, so
+#   a converged box does no network at all. Honours --dry-run. Always returns 0.
 _cloud_glab() {
-  local tag ver arch cur asset url dl ar cfile expected work
+  local tag ver arch cur rc=0
   tag=$(_cloud_glab_tag) || {
     log_warn "could not resolve a glab release tag — skipping glab"
     return 0
@@ -196,72 +205,24 @@ _cloud_glab() {
     log_info "glab $cur -> $ver"
   fi
 
-  if have dpkg; then
-    asset="glab_${ver}_linux_${arch}.deb"
-  else
-    asset="glab_${ver}_linux_${arch}.tar.gz"
-  fi
-  url="$CLOUD_GLAB_RELEASES/$tag/downloads/$asset"
-
-  if is_dry_run; then
-    log_dryrun "install glab $ver from $url"
-    changed "glab $ver"
-    return 0
-  fi
-
-  if ! http_ok "$url"; then
-    log_warn "no asset '$asset' in the glab $tag release — skipping glab"
-    log_warn "  looked at: $url"
-    return 0
-  fi
-
-  dl="${DEVENV_CACHE:?}/dl"
-  ensure_dir "$dl" || return 0
-  ar="$dl/$asset"
-  if [ ! -f "$ar" ]; then
-    if ! download "$url" "$ar"; then
-      _cloud_fail "could not download $url"
+  # The tag is already resolved, so pkg_release_install never asks GitHub for
+  # one; gitlab-org/cli only labels its messages.
+  pkg_release_install gitlab-org/cli glab "$tag" \
+    --base-url "$CLOUD_GLAB_RELEASES/{tag}/downloads" \
+    --deb "glab_{version}_linux_${arch}.deb" --rpm "glab_{version}_linux_${arch}.rpm" \
+    --tarball "glab_{version}_linux_${arch}.tar.gz" --archive-path bin/glab \
+    --checksum-asset checksums.txt || rc=$?
+  case $rc in
+    0) ;;
+    78)
+      log_skip "glab $ver: nothing in the $tag release installs here"
       return 0
-    fi
-  fi
-
-  # The checksum file's name carries no version, so cache it under one that does.
-  cfile="$dl/glab_${ver}_checksums.txt"
-  if ! download "$CLOUD_GLAB_RELEASES/$tag/downloads/checksums.txt" "$cfile"; then
-    _cloud_fail "could not fetch the glab $tag checksums — refusing to install it unverified"
-    return 0
-  fi
-  if ! expected=$(checksum_lookup "$cfile" "$asset"); then
-    _cloud_fail "$asset is not listed in the glab $tag checksums"
-    return 0
-  fi
-  if ! verify_sha256 "$ar" "$expected"; then
-    _cloud_fail "the downloaded $asset does not match its published sha256"
-    return 0
-  fi
-
-  case $asset in
-    *.deb)
-      if ! pkg_install_local "$ar"; then
-        _cloud_fail "glab $ver could not be installed"
-        return 0
-      fi
       ;;
     *)
-      work=$(devenv_tmpdir) || return 0
-      if ! run tar -xzf "$ar" -C "$work"; then
-        _cloud_fail "could not unpack $asset"
-        return 0
-      fi
-      ensure_dir /usr/local/bin || return 0
-      if ! run_sudo install -m 0755 -- "$work/bin/glab" /usr/local/bin/glab; then
-        _cloud_fail "could not install glab into /usr/local/bin"
-        return 0
-      fi
+      _cloud_fail "glab $ver could not be installed"
+      return 0
       ;;
   esac
-  log_success "installed glab $ver"
-  changed "glab $ver"
   # MUST-FIX C3: glab's form is `completion -s bash`.
   comp_cache glab glab completion -s bash
   return 0
@@ -274,18 +235,22 @@ _cloud_glab() {
 #   for this release, and the documented fallback is a uv tool venv.
 #   An azure-cli that is already installed is never upgraded or removed here
 #   (MUST-FIX S9); the exact command to do it yourself is printed instead.
+#   Off the Debian family an azure-cli PACKAGE that is already there (Fedora and
+#   Arch both ship one) is left as it is, rather than shadowed by a uv copy.
 #   Always returns 0.
 _cloud_azure_cli() {
   local rc=0 cur=''
-  if have dpkg-query; then
-    cur=$(dpkg-query -W -f='${Version}' azure-cli 2>/dev/null) || cur=''
-  fi
+  cur=$(installed_pkg_version azure-cli) || cur=''
   if [ -z "$cur" ] && have az; then
-    log_skip "az is on PATH at $(command -v az) but is not an apt package — leaving it alone"
+    log_skip "az is on PATH at $(command -v az) but no ${OS_PKG_MGR:-apt} package owns it — leaving it alone"
     return 0
   fi
 
   repo_ensure_azure_cli || rc=$?
+  if [ "$rc" = 78 ] && [ -n "$cur" ] && [ "${OS_FAMILY:-debian}" != debian ]; then
+    log_skip "azure-cli $cur is already installed as a ${OS_DISTRO:-distribution} package — leaving it alone"
+    return 0
+  fi
   if [ "$rc" = 78 ]; then
     log_warn "packages.microsoft.com publishes no azure-cli suite for this release."
     if have uv; then
@@ -299,7 +264,7 @@ _cloud_azure_cli() {
     return 0
   fi
   if [ "$rc" != 0 ]; then
-    log_warn "the azure-cli apt repository could not be configured — skipping azure-cli"
+    log_warn "the azure-cli ${OS_PKG_MGR:-apt} repository could not be configured — skipping azure-cli"
     return 0
   fi
 
@@ -311,7 +276,10 @@ _cloud_azure_cli() {
       log_warn "  below 2.30 it has no 'az login --use-device-code' worth relying on"
       log_warn "  and no support for the current Entra ID endpoints."
       log_warn "  The Microsoft repository is configured now. Upgrade it yourself:"
-      log_warn "    sudo apt-get install --only-upgrade azure-cli"
+      case ${OS_PKG_MGR:-apt} in
+        dnf) log_warn "    sudo dnf upgrade azure-cli" ;;
+        *) log_warn "    sudo apt-get install --only-upgrade azure-cli" ;;
+      esac
       log_warn "  (this repository never upgrades or removes a package you installed)"
     fi
     return 0

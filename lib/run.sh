@@ -11,7 +11,9 @@
 # MUST-FIX S14 / P1 / idempotency F21: sudo is acquired LAZILY, at the moment a
 # module actually needs root — never up front. Running as root works. A box with no
 # sudo, or a user who is not a sudoer (stock Debian), gets one actionable message
-# and a skip, not an obscure failure.
+# and a skip, not an obscure failure. The message names the mechanism that is right
+# for THIS family (FR-013): its package manager, its admin group (FAM_ADMIN_GROUP)
+# and the one extra step SUSE and Arch need before that group means anything.
 
 [ -n "${_DEVENV_RUN:-}" ] && return 0
 _DEVENV_RUN=1
@@ -77,6 +79,38 @@ run_quiet() {
   return "$rc"
 }
 
+# _sudo_install_hint  (private)
+#   Prints the command, run as root, that installs sudo with this family's package
+#   manager. No newline. Always 0.
+_sudo_install_hint() {
+  case ${OS_PKG_MGR:-apt} in
+    dnf) printf 'dnf install -y sudo' ;;
+    zypper) printf 'zypper install -y sudo' ;;
+    pacman) printf 'pacman -S --needed sudo' ;;
+    *) printf 'apt-get install -y sudo' ;;
+  esac
+}
+
+# _sudo_grant_hint  (private)
+#   Prints the command, run as root, that makes the current user a sudoer on this
+#   family. No newline. Always 0. The Debian family's spelling is the one this
+#   message always had: `adduser USER sudo`. Elsewhere `adduser` is not Debian's
+#   wrapper (on the RedHat family it is useradd), so the group is added with
+#   usermod, and the two families whose admin group grants nothing out of the box
+#   say what turns it on:
+#     suse  the stock policy is `targetpw` (root's password, for everyone);
+#           sudo-policy-wheel-auth-self lets wheel members use their own
+#     arch  /etc/sudoers ships the %wheel line commented out
+_sudo_grant_hint() {
+  local u=${USER:-$(id -un)} g=${FAM_ADMIN_GROUP:-sudo}
+  case ${OS_FAMILY:-debian} in
+    debian) printf 'adduser %s %s' "$u" "$g" ;;
+    suse) printf 'zypper install -y sudo-policy-wheel-auth-self && usermod -aG %s %s' "$g" "$u" ;;
+    arch) printf "usermod -aG %s %s && visudo   (uncomment '%%%s ALL=(ALL:ALL) ALL')" "$g" "$u" "$g" ;;
+    *) printf 'usermod -aG %s %s' "$g" "$u" ;;
+  esac
+}
+
 # need_sudo
 #   Args: none.
 #   Prints the privilege prefix to use on stdout: "sudo", or the empty string when
@@ -100,9 +134,11 @@ need_sudo() {
   fi
   if ! have sudo; then
     _DEVENV_SUDO_STATE=fail _DEVENV_SUDO_PREFIX=''
-    log_error "root privileges are required, but 'sudo' is not installed (stock Debian ships without it)."
+    local stock='stock Debian ships without it'
+    os_family_is debian || stock='a minimal install ships without it'
+    log_error "root privileges are required, but 'sudo' is not installed ($stock)."
     log_error "Either re-run this as root:      su -   then  DEVENV_ALLOW_ROOT=1 $DEVENV_HOME/bin/devenv ..."
-    log_error "or install sudo once, as root:   apt-get install -y sudo && adduser ${USER:-$(id -un)} sudo"
+    log_error "or install sudo once, as root:   $(_sudo_install_hint) && $(_sudo_grant_hint)"
     log_error "then log out and back in so the new group membership takes effect."
     printf '\n'
     return 1
@@ -133,7 +169,7 @@ need_sudo() {
   log_error "could not obtain root privileges: ${USER:-$(id -un)} is not permitted to run sudo here,"
   log_error "or no terminal is available to ask for a password."
   log_error "Fix one of these, then re-run:"
-  log_error "  * add the user to a sudo group, as root:  adduser ${USER:-$(id -un)} sudo   (log out and back in)"
+  log_error "  * add the user to a sudo group, as root:  $(_sudo_grant_hint)   (log out and back in)"
   log_error "  * or run the whole install as root:       su -   then  DEVENV_ALLOW_ROOT=1 $DEVENV_HOME/bin/devenv ..."
   log_error "  * or run only the modules that need no root, e.g.  devenv --only shell,k9s-config"
   printf '\n'

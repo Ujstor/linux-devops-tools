@@ -161,6 +161,28 @@ if [ -n "$child" ]; then
   assert_no_file "${child%/*}" 'the child removed its exec ROOT on exit'
 fi
 
+t_section 'the scratch of a module goes when the module does'
+
+# A module is its own process sharing the run directory. Its downloads used to
+# wait for the end of the run: on a tmpfs /tmp the default set filled it.
+# shellcheck disable=SC2016  # expanded by the child shell
+mod=$(env -u DEVENV_NO_TRAPS bash -c '
+    set -euo pipefail
+    . "$DEVENV_HOME/lib/common.sh"
+    d=$(devenv_tmpdir)
+    f=$(devenv_tmpfile)
+    printf "%s %s\n" "$d" "$f"
+  ' 2>/dev/null) || mod=''
+assert_ne '' "$mod" 'the module made a scratch dir and file'
+for m in $mod; do
+  case $m in
+    "$DEVENV_RUNDIR"/p.*/*) t_ok "in the module's own p.<pid>: ${m#"$DEVENV_RUNDIR"/}" ;;
+    *) t_not_ok "outside the run dir's p.<pid>: $m" ;;
+  esac
+  assert_no_file "$m" 'removed when the module exited'
+done
+assert_ok 'the shared run dir is still there for the next module' test -d "$DEVENV_RUNDIR"
+
 # This file's own roots, which have no trap to remove them (DEVENV_NO_TRAPS=1).
 rm -rf -- "${x%/*}"
 

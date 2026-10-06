@@ -1,9 +1,10 @@
 # linux-devops-tools
 
-One command turns a fresh **Debian** or **Ubuntu** box — a WSL2 distro, a VM, a cloud instance,
-a container — into a terminal-only DevOps workstation: kubectl and its plugin roster, k9s with
-its plugins and skins, Helm, Terraform, Docker, the cloud CLIs, Go/Rust/Node/Python, a curated
-shell, and a way to finish **browser logins from a machine that has no browser**.
+One command turns a fresh Linux box — **Debian, Ubuntu, AlmaLinux, Rocky Linux, Fedora, openSUSE
+Leap or Arch Linux**; a WSL2 distro, a VM, a cloud instance, a container — into a terminal-only
+DevOps workstation: kubectl and its plugin roster, k9s with its plugins and skins, Helm,
+Terraform, Docker, the cloud CLIs, Go/Rust/Node/Python, a curated shell, and a way to finish
+**browser logins from a machine that has no browser**.
 
 No desktop environment, no compositor, no GUI browser in any profile. A second run changes
 nothing, and `--dry-run` is a true no-op.
@@ -69,6 +70,11 @@ default `devops` profile — what the one-liner installs. The second is everythi
 `--profile full` or a switch of its own. How each tool is installed, pinned and verified is
 [docs/tools.md](docs/tools.md).
 
+Names are the Debian spellings. On the RedHat, SUSE and Arch families the same tool comes from
+that family's package, the vendor's `.repo`, an `.rpm` or the release archive, and a few
+Debian-only items (`nala`, `wslu`) are skipped with a reason — the per-family sources and every
+skip are in [docs/tools.md](docs/tools.md#per-family-sources).
+
 | group | in the default profile |
 |---|---|
 | **Base system** | [curl](https://github.com/curl/curl), [wget](https://gitlab.com/gnuwget/wget), [git](https://github.com/git/git), tar, [xz](https://github.com/tukaani-project/xz), zip, unzip, build-essential, pkg-config, [CMake](https://github.com/Kitware/CMake), [bash-completion](https://github.com/scop/bash-completion), [less](https://github.com/gwsw/less), [vim](https://github.com/vim/vim), [htop](https://github.com/htop-dev/htop), [tree](https://gitlab.com/OldManProgrammer/unix-tree), [jq](https://github.com/jqlang/jq), [psmisc](https://gitlab.com/psmisc/psmisc), [net-tools](https://github.com/ecki/net-tools), [ripgrep](https://github.com/BurntSushi/ripgrep), [fd](https://github.com/sharkdp/fd), [bat](https://github.com/sharkdp/bat), [trash-cli](https://github.com/andreafrancia/trash-cli), [autojump](https://github.com/wting/autojump), [tealdeer](https://github.com/tealdeer-rs/tealdeer) (`tldr`), [nala](https://gitlab.com/volian/nala) |
@@ -108,16 +114,37 @@ you have not.
 
 ## Supported systems
 
-| distribution | codename | status |
+Thirteen releases in four families, declared once in
+[`config/os-support.list`](config/os-support.list). Every one is a gate: CI installs the default
+profile twice on each, on every change, and the second run must change nothing. There is no
+allowed-to-fail tier.
+
+| family | releases | packages |
 |---|---|---|
-| **Debian 12** | bookworm | supported, tested in CI |
-| **Debian 13** | trixie | supported, tested in CI |
-| **Ubuntu 22.04 LTS** | jammy | supported, tested in CI |
-| **Ubuntu 24.04 LTS** | noble | supported, tested in CI |
-| Ubuntu 26.04 LTS | — | best-effort; runs in CI but is allowed to fail |
-| Debian testing/sid | — | runs; repositories with no suite for it take their fallback branch |
-| Mint, LMDE, Pop!\_OS and other Debian derivatives | — | best-effort: the upstream codename is resolved and used for vendor repos |
-| anything not Debian-family | — | **refused**, with a message that says so |
+| **Debian** | Debian 12, 13 · Ubuntu 22.04, 24.04, 26.04 | apt |
+| **RedHat** | AlmaLinux 9, 10 · Rocky Linux 9, 10 · Fedora 43, 44 | dnf (CRB + EPEL enabled on Alma/Rocky) |
+| **SUSE** | openSUSE Leap 16.0 | zypper |
+| **Arch** | Arch Linux (rolling) | pacman |
+
+The family comes from `/etc/os-release` — `ID`, then `ID_LIKE` — never from a hint:
+
+| machine | result |
+|---|---|
+| a listed release | runs as tested |
+| an unlisted release or a derivative of a listed family — Mint, Pop!\_OS, CentOS Stream, RHEL, Oracle Linux, Tumbleweed, Manjaro, Debian testing/sid … | runs with that family's behaviour and **one** `untested release` notice naming the nearest tested releases |
+| any other family — Alpine, Gentoo, NixOS, Void … | **refused before any change**, with the list of tested releases |
+
+Debian-family derivatives still get their upstream codename resolved for vendor repositories;
+one with no mappable codename takes each repository's fallback branch.
+
+**Arch.** pacman is never run as a partial upgrade (`-Sy` without `-u`). On a box whose package
+index is behind the mirrors — or a fresh image with none — a package install cannot proceed
+without a full upgrade, so the first run reports those packages as skipped with
+`re-run with --upgrade`. `--upgrade` runs one `pacman -Syu` together with the missing packages.
+
+On RedHat and SUSE, SELinux stays enforcing and every executable installed into `/usr/local/bin`
+gets its label restored. Sudo and CA hints name the family's own admin group (`sudo` or `wheel`)
+and trust store.
 
 Bare metal, VM, WSL2 and container all run the same code: `os_detect` reports the environment and
 modules gate themselves on it. There is no separate "WSL edition" — see [docs/wsl.md](docs/wsl.md).
@@ -151,7 +178,9 @@ everything with a release binary will skip; the shell layer still works.
 * **`~/.config/k9s/`** — plugins, hotkeys, aliases and skins; `config.yaml` is created once and
   then left to k9s.
 * **`/etc/apt/sources.list.d/`** and **`/etc/apt/keyrings/`** — deb822 sources and armored keys
-  for Docker, HashiCorp, Kubernetes, GitHub CLI, Azure CLI and Trivy.
+  for Docker, HashiCorp, Kubernetes, GitHub CLI, Azure CLI and Trivy. On RedHat and SUSE, a `.repo` file
+  in `/etc/yum.repos.d/` or `/etc/zypp/repos.d/` for each vendor that publishes one there, with
+  its key in `/etc/pki/rpm-gpg/`, imported explicitly with `rpm --import`. Arch gets none.
 * **`/usr/local/bin`, `/usr/local/go`** — release binaries and the Go toolchain. Shared, so
   `uninstall` lists them instead of removing them.
 * **`~/.local/state/devops-env/`** — a manifest with a digest per installed file. That is what
@@ -167,13 +196,13 @@ will never do to your machine: [docs/safety.md](docs/safety.md).
 | [docs/usage.md](docs/usage.md) | everyday commands, `--only`/`--skip`/`list`, updating, uninstalling |
 | [docs/configuration.md](docs/configuration.md) | `versions.env`, feature gates, `DEVENV_*`, `~/.config/devops-env/`, the `bashrc.d` fragment model |
 | [docs/modules.md](docs/modules.md) | every module: number, profiles, gates, what it does |
-| [docs/tools.md](docs/tools.md) | the tool catalog: what is installed, by which module, from where — and what was deliberately left out |
+| [docs/tools.md](docs/tools.md) | the tool catalog: what is installed, by which module, from where on each family — and what was deliberately left out |
 | [docs/sso.md](docs/sso.md) | logging in from a box with no browser: host modes, the callback problem, the `ssh -L` table, Keycloak→kubectl, Azure/AKS, GitHub, GitLab, Argo CD, OpenBao |
 | [docs/keycloak-client.md](docs/keycloak-client.md) | the identity-provider side: client settings, redirect URIs, the `groups` mapper, API-server flags |
 | [docs/safety.md](docs/safety.md) | the rules this repository holds itself to, and what it will never do |
 | [docs/wsl.md](docs/wsl.md) | WSL-specific notes and the Windows-side `wsl.exe` reference |
 | [docs/migration.md](docs/migration.md) | migrating from `wsl2-config`, and from this repository's own former name `devops-env-config` |
-| [docs/development.md](docs/development.md) | working on this repo: `make` targets, the policy linters, the module contract |
+| [docs/development.md](docs/development.md) | working on this repo: `make` targets, the policy linters, the module contract, the family layer |
 | [lib/README.md](lib/README.md) | the shell library API |
 | [`versions.env`](versions.env) | **every pin in the repository.** Nothing else pins anything |
 
