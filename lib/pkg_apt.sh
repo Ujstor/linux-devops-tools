@@ -46,13 +46,20 @@ _APT_OPTS=(-y -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-conf
 #
 #   The exports are still needed for the unprivileged half of the library
 #   (apt-cache, dpkg-query) and for a run that is already root.
+#
+#   DPkg::Lock::Timeout: wait up to ten minutes for the dpkg lock instead of
+#   failing at once. A freshly booted Ubuntu runs unattended-upgrades within
+#   minutes, and on the Ubuntu 24.04 lab guest it held the lock through the shell
+#   module: zoxide, gdu, 7zip and git-delta each failed with "Could not get lock
+#   /var/lib/dpkg/lock-frontend … held by unattended-upgr", and the second run
+#   installed them. apt older than 1.9.11 ignores the option.
 #   Honours --dry-run through run_sudo. Returns apt-get's status.
 _apt_get() {
   run_sudo env \
     DEBIAN_FRONTEND=noninteractive \
     DEBCONF_NONINTERACTIVE_SEEN=true \
     NEEDRESTART_MODE=a \
-    apt-get "$@"
+    apt-get -o DPkg::Lock::Timeout=600 "$@"
 }
 
 # _pkg_apt_refresh [--force]   — pkg_update on apt.

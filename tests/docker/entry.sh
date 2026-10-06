@@ -327,6 +327,9 @@ img_family() {
   return 1
 }
 
+# in_container — 0 inside a container (podman or docker), 1 on a real machine.
+in_container() { [ -f /run/.containerenv ] || [ -f /.dockerenv ]; }
+
 # img_install PKG… — install packages for the HARNESS with the image's own
 # package manager. Never for the tool: it installs what it needs itself.
 #
@@ -377,8 +380,12 @@ img_bootstrap() {
     command -v "$cmd" >/dev/null 2>&1 || want+=("$pkg")
   done
   info "bootstrap ($FAMILY): ${want[*]:-nothing missing}"
-  if [ "$FAMILY" = arch ]; then
-    # Always, even with nothing missing: see img_install.
+  if [ "$FAMILY" = arch ] && { in_container || ! compgen -G '/var/lib/pacman/sync/*.db' >/dev/null; }; then
+    # An image: always, even with nothing missing (see img_install). NEVER on a
+    # real machine with a sync database: there -Syu upgrades the kernel under a
+    # running system, and the Arch lab guest then ran 7.2.8-arch1-1 with only
+    # arch1-2's modules on disk — dockerd could not load nf_tables. A machine is
+    # proven as it stands; its own database already matches what is installed.
     pacman -Syu --noconfirm --needed ${want[0]+"${want[@]}"} >/dev/null
   elif [ "${#want[@]}" -gt 0 ]; then
     img_install "${want[@]}"
@@ -558,7 +565,7 @@ grant_sudo() {
   # Containers only: the lab proof runs this same script on real machines,
   # and those must be proven exactly as they ship.
   local f
-  if [ -f /run/.containerenv ] || [ -f /.dockerenv ]; then
+  if in_container; then
     for f in /etc/shadow /etc/gshadow; do
       if [ -f "$f" ] && [ "$(stat -c %a "$f")" = 0 ]; then chmod 0400 "$f"; fi
     done
