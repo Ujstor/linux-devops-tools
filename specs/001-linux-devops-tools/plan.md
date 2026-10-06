@@ -130,7 +130,7 @@ so every pin is exported into every module. Full contracts in [`lib/README.md`](
 | `run.sh` | **the gate**: `run`, `run_sudo`, `run_quiet`, `is_dry_run`, lazy sudo, `confirm`, `confirm_dangerous`, `changed` |
 | `os.sh` | the detection contract below |
 | `fs.sh` | every filesystem mutation: `write_if_changed` (the default writer), `write_once`, `write_managed`, `ensure_block_in_file`, `ensure_line_in_file`, `symlink_file`, `yaml_map_merge`, `backup_file`, the manifest |
-| `net.sh` | `download`, `verify_sha256`, `gh_latest_tag`, `gh_release_install`, `deb_release_install`, `sh_installer_run` |
+| `net.sh` | `download`, `verify_sha256`, `gh_latest_tag`, `gh_release_install`, `pkg_release_install` (was `deb_release_install`; see 002), `sh_installer_run` |
 | `pkg.sh` | the one package policy; `pkg_remove`/`pkg_purge` are report-only |
 | `repo.sh` | deb822 sources, armored keys with optional digest pinning, per-vendor suite resolution |
 | `shell.sh` | the profile region, drop-ins, the completion cache and its shims |

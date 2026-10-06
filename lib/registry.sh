@@ -13,6 +13,7 @@
 #     # meta: name=k8s-plugins
 #     # meta: desc=krew, kubectl plugins and helm plugins
 #     # meta: profiles=devops,full
+#     # meta: family=debian          # optional: debian,redhat,suse,arch — absent = all
 #     # meta: os=any                 # any | debian | ubuntu | wsl | !wsl | !container
 #     # meta: arch=amd64,arm64
 #     # meta: needs=kubectl          # missing => SKIP (78), never a failure
@@ -159,10 +160,22 @@ resolve_plan() {
 #   Prints nothing. Returns:
 #     0  run it
 #     78 skip it (the reason has already been logged)
-#   Gates, in order: os=, arch=, needs=, root=.
+#   Gates, in order: family=, os=, arch=, needs=, root=.
+#   family= is a comma list of OS_FAMILY values (FR-014); absent means every family.
+#   It comes first because "this module means nothing on this family" is the most
+#   basic answer, and must never be shadowed by a narrower one such as root=.
 module_gate() {
   local f=$1 v name
   name=$(module_name "$f")
+  if v=$(module_meta "$f" family); then
+    case ",${v// /}," in
+      *",${OS_FAMILY:-},"*) ;;
+      *)
+        log_skip "$name: not applicable on the ${OS_FAMILY:-unknown} family"
+        return 78
+        ;;
+    esac
+  fi
   if v=$(module_meta "$f" os); then
     case $v in
       any) ;;
@@ -218,21 +231,24 @@ module_gate() {
 
 # print_plan
 #   Machine-readable listing on STDOUT, one TAB-separated row per module:
-#     name<TAB>file<TAB>profiles<TAB>os<TAB>arch<TAB>needs<TAB>root<TAB>desc
+#     name<TAB>file<TAB>profiles<TAB>os<TAB>arch<TAB>needs<TAB>root<TAB>desc<TAB>family
+#   family is LAST, after desc, so every column a script already reads by number
+#   (`$7=="yes"` for root) keeps its number. `all` when the module sets no family=.
 #   This is `devenv list`. Never executes a module. Always returns 0.
 print_plan() {
   local f all=()
   mapfile -t all < <(module_list)
   for f in "${all[@]}"; do
     [ -n "$f" ] || continue
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$(module_name "$f")" "$f" \
       "$(module_meta "$f" profiles || printf '-')" \
       "$(module_meta "$f" os || printf 'any')" \
       "$(module_meta "$f" arch || printf 'any')" \
       "$(module_meta "$f" needs || printf '-')" \
       "$(module_meta "$f" root || printf 'no')" \
-      "$(module_meta "$f" desc || printf '-')"
+      "$(module_meta "$f" desc || printf '-')" \
+      "$(module_meta "$f" family || printf 'all')"
   done
 }
 

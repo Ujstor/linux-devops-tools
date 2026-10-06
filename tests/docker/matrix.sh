@@ -9,12 +9,18 @@
 # Usage:
 #     make test-docker
 #     bash tests/docker/matrix.sh
-#     IMAGES="debian:12 ubuntu:24.04" bash tests/docker/matrix.sh
-#     PROFILE=ci bash tests/docker/matrix.sh          # a deeper, slower run
+#     IMAGES="docker.io/library/debian:12" bash tests/docker/matrix.sh
+#     PROFILE=devops bash tests/docker/matrix.sh      # the default set, what CI runs
+#     bash tests/docker/matrix.sh --print-images      # the resolved lists, no Docker
 #
 # Environment:
-#     IMAGES        required images, space separated
-#     SOFT_IMAGES   images that may fail without failing the run (a future release)
+#     IMAGES        required images, space separated. Default: the image column of
+#                   config/os-support.list, every row — the one declaration of the
+#                   supported releases (spec 002 FR-002). There is no list here.
+#     SOFT_IMAGES   images that may fail without failing the run. Default: none.
+#                   Every supported release is a gate (SC-007); this exists for a
+#                   candidate release someone wants to try, by hand, before it
+#                   enters the list.
 #     PROFILE       profile installed for real     (default minimal)
 #     DRY_PROFILE   profile used for the dry run   (default ci)
 #     DOCKER        the container CLI              (default docker)
@@ -29,12 +35,16 @@
 
 set -euo pipefail
 
-# `${VAR-default}`, not `${VAR:-default}`. With the colon an explicitly EMPTY
-# IMAGES falls back to the full matrix, so `IMAGES= make test-docker` — a typo,
-# or a caller that built an empty list — silently runs something other than what
-# was asked for, and the empty-list tripwire below could never fire.
-IMAGES=${IMAGES-"debian:12 debian:13 ubuntu:22.04 ubuntu:24.04"}
-SOFT_IMAGES=${SOFT_IMAGES-"ubuntu:26.04"}
+# "Unset", not "empty", decides whether a default applies — `${VAR-default}` and
+# `${VAR+set}`, never the colon forms. With the colon an explicitly EMPTY IMAGES
+# falls back to the full matrix, so `IMAGES= make test-docker` — a typo, or a
+# caller that built an empty list — silently runs something other than what was
+# asked for, and the empty-list tripwire below could never fire.
+#
+# IMAGES is not defaulted on this line: its default is read from
+# config/os-support.list by resolve_images, which can fail, and a failure there
+# must say why.
+SOFT_IMAGES=${SOFT_IMAGES-}
 PROFILE=${PROFILE:-minimal}
 DRY_PROFILE=${DRY_PROFILE:-ci}
 DOCKER=${DOCKER:-docker}
@@ -43,10 +53,39 @@ REQUIRE_DOCKER=${REQUIRE_DOCKER:-0}
 
 ROOT=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")/../.." && pwd)
 LOGDIR=${LOGDIR:-$ROOT/.cache/docker-matrix}
+LIST=$ROOT/config/os-support.list
+IMAGES_FROM='the IMAGES variable'
 
 RESULTS=''
 HARD_FAILURES=0
 RAN=0
+
+# resolve_images — set IMAGES from config/os-support.list unless the caller set
+# it (set, not non-empty: see the note above). A missing list,
+# a row that is not five columns and a list with no row at all are failures:
+# each of them would otherwise test a different set from the one declared, and
+# tests/policy/os-support.sh — which compares this script's default with the CI
+# matrices — would be comparing against nothing.
+resolve_images() {
+  [ -z "${IMAGES+set}" ] || return 0
+  if [ ! -r "$LIST" ]; then
+    printf 'IMAGES is unset and %s is not readable — there is no default to test\n' "$LIST" >&2
+    return 1
+  fi
+  local bad
+  bad=$(awk '!/^[[:space:]]*(#|$)/ && NF != 5 { printf "  line %d: %s\n", NR, $0 }' "$LIST")
+  if [ -n "$bad" ]; then
+    printf '%s: a row is not "family distro release image lab":\n%s\n' "$LIST" "$bad" >&2
+    return 1
+  fi
+  IMAGES=$(awk '!/^[[:space:]]*(#|$)/ { printf "%s%s", sep, $4; sep = " " }' "$LIST")
+  if [ -z "$IMAGES" ]; then
+    printf '%s has no release row — there is nothing to test\n' "$LIST" >&2
+    return 1
+  fi
+  IMAGES_FROM=${LIST#"$ROOT"/}
+  return 0
+}
 
 run_image() {
   local image=$1 soft=$2 log rc=0 name
@@ -69,14 +108,14 @@ run_image() {
     "$image" bash /src/tests/docker/entry.sh 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}
 
   if [ "$rc" -eq 0 ]; then
-    RESULTS="$RESULTS$(printf '  %-16s PASS\n' "$image")"$'\n'
+    RESULTS="$RESULTS$(printf '  %-36s PASS\n' "$image")"$'\n'
     return 0
   fi
   if [ "$soft" = 1 ]; then
-    RESULTS="$RESULTS$(printf '  %-16s FAIL (allowed: not a supported target yet)\n' "$image")"$'\n'
+    RESULTS="$RESULTS$(printf '  %-36s FAIL (allowed: not a supported target yet)\n' "$image")"$'\n'
     return 0
   fi
-  RESULTS="$RESULTS$(printf '  %-16s FAIL  -> %s\n' "$image" "$log")"$'\n'
+  RESULTS="$RESULTS$(printf '  %-36s FAIL  -> %s\n' "$image" "$log")"$'\n'
   HARD_FAILURES=$((HARD_FAILURES + 1))
   return 0
 }
@@ -96,6 +135,25 @@ no_docker() {
 }
 
 main() {
+  case ${1:-} in
+    '') ;;
+    --print-images)
+      # What a run WOULD test, without Docker: one `image X` or `soft X` line
+      # each. tests/policy/os-support.sh reads this to hold the default to the
+      # list, so it resolves exactly as a real run does.
+      resolve_images || return 1
+      local i
+      for i in $IMAGES; do printf 'image %s\n' "$i"; done
+      for i in $SOFT_IMAGES; do printf 'soft %s\n' "$i"; done
+      return 0
+      ;;
+    *)
+      printf 'usage: %s [--print-images]\n' "${0##*/}" >&2
+      return 64
+      ;;
+  esac
+  resolve_images || return 1
+
   if ! command -v "$DOCKER" >/dev/null 2>&1; then
     no_docker "$DOCKER is not installed — the container matrix needs it"
     return
@@ -115,7 +173,7 @@ main() {
   mkdir -p "$LOGDIR"
   printf 'checkout : %s\n' "$ROOT"
   printf 'profiles : dry-run=%s install=%s\n' "$DRY_PROFILE" "$PROFILE"
-  printf 'images   : %s\n' "$IMAGES"
+  printf 'images   : %s  (from %s)\n' "$IMAGES" "$IMAGES_FROM"
   [ -n "$SOFT_IMAGES" ] && printf 'soft     : %s\n' "$SOFT_IMAGES"
   printf 'logs     : %s\n' "$LOGDIR"
 

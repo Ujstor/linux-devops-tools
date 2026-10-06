@@ -8,7 +8,7 @@ Three layers, in the order they are decided:
    the installer seeds once and then never touches again.
 
 **Source of truth:** [`versions.env`](../versions.env) for pins, `bin/devenv --help` for flags.
-Verified 2026-09-11.
+Verified 2026-10-06.
 
 ## Pins
 
@@ -24,9 +24,35 @@ both forms appear on purpose. Three sentinel values are special:
 
 | value | meaning |
 |---|---|
-| `latest` | resolved at install time from the `releases/latest` 302 header (no `api.github.com`, so no rate limit), asserted to be a real tag URL, cached 6 h |
-| `apt` | not pinned here: the vendor's apt repository decides |
+| `latest` | resolved at install time from the `releases/latest` 302 header (no `api.github.com`, so no rate limit), asserted to be a real tag URL, cached 6 h. `OPENCODE_VERSION=latest` is resolved the same way and handed to the vendor installer as a concrete version |
+| `apt` | not pinned here: the vendor's package repository decides — apt, dnf or zypper alike |
 | `auto` | `K8S_MINOR` only — enables the three-tier `stable.txt` probe |
+
+`TERRAFORM_VERSION` stays `apt`, but a machine no HashiCorp repository serves (openSUSE Leap, a
+Fedora release HashiCorp has dropped) installs the release zip, and that path has a real pin:
+`TERRAFORM_RELEASE_VERSION`. Renovate follows it.
+
+### Signing-key digests
+
+A vendor signing key is trust in everything that repository will ever serve. Every key is
+validated as an OpenPGP key before it is installed; a `*_KEY_SHA256` set to the sha256 of the
+fetched key **file** also pins it, so a mismatch re-fetches instead of trusting the local copy.
+Empty (the default) means validated but not pinned.
+
+| variable | key |
+|---|---|
+| `DOCKER_KEY_SHA256` | Docker, apt |
+| `HASHICORP_KEY_SHA256` | HashiCorp — the same file on apt and rpm |
+| `KUBERNETES_KEY_SHA256` | `pkgs.k8s.io` — the same file on apt and rpm |
+| `GITHUB_CLI_KEY_SHA256` | GitHub CLI, apt (binary key) |
+| `AZURE_CLI_KEY_SHA256` | Microsoft `microsoft.asc` — apt, and EL 9 |
+| `TRIVY_KEY_SHA256` | Trivy — the same file on apt and rpm |
+| `DOCKER_RPM_KEY_SHA256` | Docker, rpm — a different key from the apt one |
+| `GITHUB_CLI_RPM_KEY_SHA256` | GitHub CLI, rpm (the armored `.asc`) |
+| `AZURE_CLI_2025_KEY_SHA256` | Microsoft `microsoft-2025.asc`, which signs the EL 10 repository |
+
+On RedHat and SUSE the key is kept in `/etc/pki/rpm-gpg/` and imported with `rpm --import`;
+nothing lets dnf or zypper decide on their own to trust a vendor.
 
 ## Feature gates
 
@@ -38,13 +64,13 @@ the environment always wins over a profile's default.
 |---|---|
 | `KREW_EXTRAS=1` | the optional kubectl plugin roster |
 | `INSTALL_PACKER=1` | Packer alongside Terraform |
-| `INSTALL_EXTRAS=1` | the optional apt extras |
+| `INSTALL_EXTRAS=1` | the optional package extras |
 | `INSTALL_K8S_OPT=1` | `kor`, `kube-linter`, `kube-bench`, `nerdctl`, `kubeseal` |
 | `INSTALL_AI_AGENTS=1` | `crush`. Claude Code and opencode are base installs and are not gated |
 | `INSTALL_HOMEBREW=1` | actually install Homebrew instead of only auditing it (needs glibc ≥ 2.39) |
-| `TMUX_FROM_SOURCE=1` | build tmux instead of taking the apt one |
-| `ENABLE_NALA_ALIAS=1` | `alias apt='nala'` — an alias, never a function, and `sudo` is never redefined |
-| `DEVENV_UPGRADE=1` | allow `apt-get upgrade` (same as `--upgrade`) |
+| `TMUX_FROM_SOURCE=1` | build tmux instead of taking the distribution's |
+| `ENABLE_NALA_ALIAS=1` | `alias apt='nala'` — an alias, never a function, and `sudo` is never redefined. Debian family only |
+| `DEVENV_UPGRADE=1` | allow a system upgrade (same as `--upgrade`): `apt-get upgrade`, `dnf upgrade`, `zypper update`. On Arch it is the one `pacman -Syu` an install needs when the package index is behind |
 
 ## Privileged, hard-to-undo steps
 
@@ -55,10 +81,10 @@ none of them is safe to imply:
 |---|---|---|
 | `--allow-docker-group` | `DEVENV_ALLOW_DOCKER_GROUP=1` | adding your user to the `docker` group (root-equivalent) |
 | `--allow-wsl-conf` | `DEVENV_ALLOW_WSL_CONF=1` | writing `/etc/wsl.conf` |
-| `--allow-pkg-remove` | `DEVENV_ALLOW_PKG_REMOVE=1` | removing an apt package |
+| `--allow-pkg-remove` | `DEVENV_ALLOW_PKG_REMOVE=1` | removing a package |
 | — | `DEVENV_ALLOW_UNINSTALL_ALL=1` | `uninstall --all` without a prompt |
 | — | `DEVENV_ALLOW_ROOT=1` | letting `install.sh` run as root |
-| — | `DEVENV_ALLOW_DOWNGRADES=1` | letting apt move `kubectl` back a minor |
+| — | `DEVENV_ALLOW_DOWNGRADES=1` | letting the package manager move `kubectl` back a minor |
 
 ## Paths
 
@@ -71,6 +97,8 @@ none of them is safe to imply:
 | `DEVENV_REPO` | `Ujstor/linux-devops-tools` |
 | `DEVENV_REPO_URL` | `https://github.com/$DEVENV_REPO.git` |
 | `DEVENV_REF` | `main` |
+| `DEVENV_OS_SUPPORT_LIST` | `$DEVENV_HOME/config/os-support.list` — the tested releases. A machine of a known family with no row runs untested, with one notice |
+| `DEVENV_PKG_MAP` | `$DEVENV_HOME/config/packages.map` — Debian package names to each family's. Never read on the Debian family |
 
 ## Per-module behaviour switches
 

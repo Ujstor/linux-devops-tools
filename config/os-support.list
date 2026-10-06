@@ -1,0 +1,43 @@
+# config/os-support.list — THE supported releases. Declared once, here (FR-002).
+#
+# Every row is a GATE: a release on this list is exercised by the container matrix
+# on every change and, where it has a lab machine, proven on that machine before a
+# release is declared ready. A release becomes supported by entering this list and
+# the gate together; there is no allowed-to-fail tier.
+#
+# Read by:
+#   lib/os.sh                    the run-time gate. A row here is OS_SUPPORT=tested;
+#                                a machine of a known family with no row is
+#                                `untested` (it runs, with one notice); a machine of
+#                                no known family is refused before any change.
+#   tests/docker/matrix.sh       its default image list.
+#   tests/policy/os-support.sh   fails when the CI matrices or the lab inventory
+#                                disagree with this file (SC-006).
+#
+# FORMAT. One row per release, whitespace-separated, `#` starts a comment:
+#
+#   family   lib/family/<family>.sh: debian | redhat | suse | arch
+#   distro   the os-release ID, exactly
+#   release  the matrix form of the release, which is what lib/os.sh compares:
+#              Ubuntu and Leap   the exact VERSION_ID      22.04  16.0
+#              Debian, EL, Fedora  the major of VERSION_ID  12  9  43
+#              Arch              rolling
+#   image    the container image the matrix runs, fully qualified
+#   lab      yes | no — whether the lab has a real machine of this release
+#
+# Ubuntu 22.04 has no lab machine: its proof is the container matrix alone.
+
+# family distro        release image                                    lab
+debian    debian        12      docker.io/library/debian:12              yes
+debian    debian        13      docker.io/library/debian:13              yes
+debian    ubuntu        22.04   docker.io/library/ubuntu:22.04           no
+debian    ubuntu        24.04   docker.io/library/ubuntu:24.04           yes
+debian    ubuntu        26.04   docker.io/library/ubuntu:26.04           yes
+redhat    almalinux     9       docker.io/library/almalinux:9            yes
+redhat    almalinux     10      docker.io/library/almalinux:10           yes
+redhat    rocky         9       docker.io/rockylinux/rockylinux:9        yes
+redhat    rocky         10      docker.io/rockylinux/rockylinux:10       yes
+redhat    fedora        43      docker.io/library/fedora:43              yes
+redhat    fedora        44      docker.io/library/fedora:44              yes
+suse      opensuse-leap 16.0    docker.io/opensuse/leap:16.0             yes
+arch      arch          rolling docker.io/library/archlinux:latest       yes

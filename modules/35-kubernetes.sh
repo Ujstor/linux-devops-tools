@@ -22,7 +22,7 @@
 # sentinel `auto` enabling lib/repo.sh's three-tier probe (current cluster ->
 # dl.k8s.io/release/stable.txt -> cached answer). Changing one line in
 # versions.env now moves every box. lib/repo.sh refuses a silent DOWNGRADE, and
-# k8s_apt_upgrade_to_candidate() below makes sure the already-installed client
+# k8s_kubectl()'s pkg_upgrade_one below makes sure the already-installed client
 # actually follows the stream instead of staying on the EOL minor.
 #
 # HOW EACH TOOL IS INSTALLED, and why the method differs:
@@ -34,6 +34,13 @@
 #                       idempotency gate and apt resolves the dependencies.
 #   release binary      everything else, pinned in versions.env, checksum
 #                       verified, installed into $K8S_BIN_DIR.
+#   OTHER FAMILIES (spec 002). The same vendor repositories as .repo files on
+#   redhat and suse (lib/repo.sh); the release .rpm instead of the .deb, from the
+#   same release and the same checksum file; and on arch, where no vendor
+#   publishes a repository, the distribution's own kubectl and trivy (kubectl's
+#   minor is reported against K8S_MINOR) and the release ARCHIVE in place of a
+#   package. Every rpm and archive pattern below was checked against the pinned
+#   release's real asset list; a package file is never installed as a binary.
 #   get.helm.sh         helm — the only tool here that does not live on GitHub.
 #                       Helm 4. `get-helm-4` is deliberately NOT used: it
 #                       resolves "latest" at run time, and a bootstrap script
@@ -189,12 +196,21 @@ k8s_release() {
   return 0
 }
 
-# k8s_deb PKG VERSION REPO ASSET_PATTERN [OPTS…]
-#   One release .deb. `--bin NAME` when the command differs from the package.
+# k8s_pkg PKG VERSION VERSION_CMD REPO [OPTS…]
+#   One tool a release publishes as a PACKAGE: the .deb on apt, the .rpm on dnf
+#   and zypper, the release archive where neither installs (pkg_release_install,
+#   plan D7). OPTS go to pkg_release_install unchanged: --deb/--rpm/--tarball,
+#   `--bin NAME` when the command differs from the package, and the checksum
+#   options. VERSION_CMD makes the command print its version — the archive path
+#   gates on it.
+#   Off apt, the archive's file is gated here first, on $K8S_BIN_DIR/<bin> and not
+#   on whatever PATH finds (the IDEMPOTENCY note above): a shadowing copy in
+#   ~/go/bin would otherwise make the archive reinstall on every run. On apt the
+#   dpkg gate inside pkg_release_install is the only one, as before.
 #   Records the outcome and always returns 0.
-k8s_deb() {
-  local pkg=${1:?k8s_deb: PKG required} version=${2:?k8s_deb: VERSION required}
-  local repo=${3:?k8s_deb: REPO required} asset=${4:?k8s_deb: ASSET required}
+k8s_pkg() {
+  local pkg=${1:?k8s_pkg: PKG required} version=${2:?k8s_pkg: VERSION required}
+  local vcmd=${3:?k8s_pkg: VERSION_CMD required} repo=${4:?k8s_pkg: REPO required}
   shift 4
   local want rc=0 bin=$pkg i=0
   local opts=("$@")
@@ -203,56 +219,28 @@ k8s_deb() {
     if [ "${opts[i]}" = --bin ]; then bin=${opts[i + 1]}; fi
     i=$((i + 1))
   done
-  deb_release_install "$repo" "$asset" "$pkg" "$version" "$@" || rc=$?
+  if [ "${OS_PKG_MGR:-apt}" != apt ] && k8s_bin_at "$K8S_BIN_DIR/$bin" "$want" "$vcmd"; then
+    log_skip "$bin is already $want"
+    K8S_OK+=("$pkg $want")
+    k8s_warn_shadow "$bin"
+    return 0
+  fi
+  pkg_release_install "$repo" "$pkg" "$version" "$@" \
+    --dest "$K8S_BIN_DIR" --version-cmd "$vcmd" || rc=$?
   k8s_record "$pkg $want" "$rc"
   if [ "$rc" = 0 ]; then k8s_warn_shadow "$bin"; fi
   return 0
 }
 
-# k8s_apt_upgrade_to_candidate PKG
-#   Upgrades exactly ONE package to the candidate of the repositories that are
-#   configured right now. It is neither pkg_install (which never touches an
-#   installed package) nor pkg_upgrade (the whole system, and gated behind
-#   --upgrade). It exists because pointing the kubernetes source at $K8S_MINOR
-#   is pointless while the v1.29 client from the old repo stays installed —
-#   which is exactly the state this module was written to fix.
-#   Idempotent: nothing happens once the installed version is >= the candidate.
-#   Honours --dry-run through run_sudo. Always returns 0.
-k8s_apt_upgrade_to_candidate() {
-  local pkg=${1:?k8s_apt_upgrade_to_candidate: PKG required} cur cand
-  have dpkg-query || return 0
-  pkg_installed "$pkg" || return 0
-  pkg_update
-  cur=$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null) || return 0
-  cand=$(pkg_candidate_version "$pkg") || return 0
-  if version_ge "$cur" "$cand"; then
-    log_debug "$pkg $cur is already at or above the candidate $cand"
-    return 0
-  fi
-  log_info "$pkg $cur -> $cand (following the configured stream)"
-  # `env DEBIAN_FRONTEND=…` is attached to the command, not merely exported: sudo's
-  # env_reset drops it otherwise and an unattended upgrade can stop on a debconf
-  # prompt. Same reasoning, and same fix, as lib/pkg.sh's _apt_get.
-  # `--only-upgrade` is the one apt operation lib/pkg.sh does not express: it moves
-  # an ALREADY-INSTALLED package along its configured stream and installs nothing
-  # new, which is exactly what following a kubernetes minor means.
-  run_sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
-    -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef \
-    --only-upgrade -- "$pkg" || { # policy-allow: no-bare-apt
-    log_warn "could not upgrade $pkg to $cand — leaving $cur in place"
-    return 0
-  }
-  changed "apt upgrade $pkg $cand"
-  return 0
-}
-
 # ---------------------------------------------------------------------------
-# kubectl — the one tool that comes from an apt repository
+# kubectl — the one tool that comes from a vendor package repository
 # ---------------------------------------------------------------------------
 
 # k8s_kubectl
 #   Configures pkgs.k8s.io for the resolved minor, installs kubectl and pulls an
-#   already-installed client up to that stream. Always returns 0.
+#   already-installed client up to that stream. On arch, where pkgs.k8s.io has no
+#   repository (78 from lib/repo.sh), the official binary of the same stream
+#   instead — see k8s_kubectl_release. Always returns 0.
 k8s_kubectl() {
   local stream rc=0
   stream=$(k8s_detect_stream)
@@ -261,12 +249,16 @@ k8s_kubectl() {
   case $rc in
     0) ;;
     78)
-      log_warn "no usable kubernetes apt repository for this box — skipping kubectl"
+      if [ "${OS_FAMILY:-debian}" != debian ]; then
+        k8s_kubectl_release "$stream"
+        return 0
+      fi
+      log_warn "no usable kubernetes ${OS_PKG_MGR:-apt} repository for this box — skipping kubectl"
       K8S_SKIPPED+=("kubectl ($stream)")
       return 0
       ;;
     *)
-      K8S_FAILED+=("kubernetes apt repository")
+      K8S_FAILED+=("kubernetes ${OS_PKG_MGR:-apt} repository")
       return 0
       ;;
   esac
@@ -279,7 +271,15 @@ k8s_kubectl() {
     K8S_FAILED+=("kubectl")
     return 0
   fi
-  k8s_apt_upgrade_to_candidate kubectl
+  # Pointing the source at $K8S_MINOR is pointless while the v1.29 client from
+  # the old repo stays installed — which is exactly the state this module was
+  # written to fix. pkg_install never touches an installed package and
+  # pkg_upgrade is the whole system behind --upgrade; pkg_upgrade_one moves this
+  # ONE installed package to the candidate of the repository configured right now
+  # and installs nothing new (apt's --only-upgrade), which is what following a
+  # kubernetes minor means. It is a no-op once kubectl is at the candidate, and it
+  # warns — never fails the module — when the upgrade is refused.
+  pkg_upgrade_one kubectl || true
   if have kubectl; then
     K8S_OK+=("kubectl $(bin_version kubectl 'version --client' || printf 'installed\n')")
     log_info "kubectl supports +/-1 minor against the API server; keep K8S_MINOR within one"
@@ -287,6 +287,67 @@ k8s_kubectl() {
   else
     K8S_SKIPPED+=("kubectl")
   fi
+  return 0
+}
+
+# k8s_kubectl_release STREAM
+#   The official kubectl binary for the newest patch of STREAM, from dl.k8s.io and
+#   verified against its published .sha256 — for a family no kubernetes package
+#   repository serves (plan D6: arch). Not the distribution's kubectl: Arch's
+#   follows Arch (1.37 on 2026-10-06), three minors past a v1.34 fleet, and
+#   kubectl supports one. Gated on the version of $K8S_BIN_DIR/kubectl, so it moves
+#   with the stream's patches exactly as pkg_upgrade_one moves the apt/rpm client.
+#   Always returns 0; the outcome is recorded.
+k8s_kubectl_release() {
+  local stream=${1:?k8s_kubectl_release: STREAM required} tag ver arch url dl sum
+  log_info "no kubernetes package repository for the ${OS_FAMILY:-?} family — the official ${stream} binary"
+  if is_dry_run; then
+    log_dryrun "install the newest kubectl ${stream}.x from dl.k8s.io -> $K8S_BIN_DIR/kubectl"
+    changed "kubectl ${stream}.x"
+    K8S_OK+=("kubectl ${stream}.x (dl.k8s.io)")
+    return 0
+  fi
+  tag=$(http_body "https://dl.k8s.io/release/stable-${stream#v}.txt" | tr -d '[:space:]') || tag=''
+  case $tag in
+    "$stream".*) ;;
+    *)
+      log_warn "dl.k8s.io named no release for the ${stream} stream ('${tag:-nothing}') — skipping kubectl"
+      K8S_SKIPPED+=("kubectl ($stream)")
+      return 0
+      ;;
+  esac
+  ver=${tag#v}
+  if k8s_bin_at "$K8S_BIN_DIR/kubectl" "$ver" 'version --client'; then
+    log_skip "kubectl is already $ver"
+    K8S_OK+=("kubectl $ver (dl.k8s.io)")
+    k8s_warn_shadow kubectl
+    return 0
+  fi
+  arch=${OS_ARCH_GO:-amd64}
+  url="https://dl.k8s.io/release/$tag/bin/linux/$arch/kubectl"
+  dl="${DEVENV_CACHE:?}/dl/kubectl-$tag-$arch"
+  ensure_dir "$(dirname -- "$dl")" || {
+    K8S_FAILED+=("kubectl")
+    return 0
+  }
+  if [ ! -f "$dl" ] && ! download "$url" "$dl"; then
+    K8S_FAILED+=("kubectl")
+    return 0
+  fi
+  sum=$(http_body "$url.sha256" | tr -d '[:space:]') || sum=''
+  if [ -z "$sum" ] || ! verify_sha256 "$dl" "$sum"; then
+    log_error "kubectl $tag: dl.k8s.io's .sha256 could not be fetched or did not match — refusing to install unverified"
+    K8S_FAILED+=("kubectl")
+    return 0
+  fi
+  if ! k8s_install_file "$dl" "$K8S_BIN_DIR/kubectl" 0755; then
+    K8S_FAILED+=("kubectl")
+    return 0
+  fi
+  log_success "installed kubectl $ver -> $K8S_BIN_DIR/kubectl"
+  changed "kubectl $ver"
+  K8S_OK+=("kubectl $ver (dl.k8s.io)")
+  k8s_warn_shadow kubectl
   return 0
 }
 
@@ -319,11 +380,21 @@ k8s_helm() {
     K8S_OK+=("helm $ver")
     return 0
   fi
-  if ! http_ok "$url"; then
-    log_warn "get.helm.sh publishes no $asset — skipping helm"
-    K8S_SKIPPED+=("helm $ver")
-    return 0
-  fi
+  local hrc=0
+  http_ok "$url" || hrc=$?
+  case $hrc in
+    0) ;;
+    1)
+      log_warn "get.helm.sh publishes no $asset — skipping helm"
+      K8S_SKIPPED+=("helm $ver")
+      return 0
+      ;;
+    *)
+      log_error "helm: could not reach $url (network or server error)"
+      K8S_FAILED+=("helm")
+      return 0
+      ;;
+  esac
   dl="${DEVENV_CACHE:?}/dl"
   ensure_dir "$dl" || {
     K8S_FAILED+=("helm")
@@ -363,18 +434,15 @@ k8s_helm() {
 }
 
 # k8s_install_file SRC DEST MODE
-#   install(1) through the right privilege gate. Mirrors what lib/fs.sh does for
-#   its own writers, using the public fs_needs_root predicate, so a box where
-#   /usr/local/bin is user-writable never asks for a password.
+#   install(1) through the right privilege gate — lib/fs.sh's fs_install, which
+#   asks for root only when DEST's directory needs it, so a box where
+#   /usr/local/bin is user-writable never asks for a password, and which restores
+#   the SELinux label of the installed file on the families that enforce it.
 k8s_install_file() {
   local src=${1:?k8s_install_file: SRC required} dest=${2:?k8s_install_file: DEST required}
   local mode=${3:-0755}
   ensure_dir "$(dirname -- "$dest")" || return 1
-  if fs_needs_root "$dest"; then
-    run_sudo install -m "$mode" -- "$src" "$dest"
-  else
-    run install -m "$mode" -- "$src" "$dest"
-  fi
+  fs_install "$src" "$dest" "$mode"
 }
 
 # ---------------------------------------------------------------------------
@@ -390,11 +458,17 @@ k8s_install_file() {
 #   fails, and the caller then installs with an explicit, documented exception.
 k8s_yq_sha256() {
   local tag=${1:?k8s_yq_sha256: TAG required} asset=${2:?k8s_yq_sha256: ASSET required}
-  local base="https://github.com/mikefarah/yq/releases/download/$tag" col
-  col=$(http_body "$base/checksums_hashes_order" | grep -n '^SHA-256$' | head -n1 | cut -d: -f1) || return 1
+  local base="https://github.com/mikefarah/yq/releases/download/$tag" col order sums
+  # Each body is read whole BEFORE it is parsed, and the parsers read to the end.
+  # A `| head -n1` or an awk `exit` closed its pipe early, the writer died of
+  # SIGPIPE, pipefail failed the pipeline — and yq installed WITHOUT a checksum on
+  # every box, every run, through the exception path below.
+  order=$(http_body "$base/checksums_hashes_order") || return 1
+  col=$(printf '%s\n' "$order" | awk '$0 == "SHA-256" && !n { n = NR } END { print n }')
   case ${col:-} in '' | *[!0-9]*) return 1 ;; esac
-  http_body "$base/checksums" \
-    | awk -v a="$asset" -v c="$col" '$1 == a { print $(c + 1); exit }' \
+  sums=$(http_body "$base/checksums") || return 1
+  printf '%s\n' "$sums" \
+    | awk -v a="$asset" -v c="$col" '$1 == a && v == "" { v = $(c + 1) } END { print v }' \
     | grep -xE '[0-9a-f]{64}'
 }
 
@@ -439,13 +513,19 @@ k8s_core_tools() {
   # k9s_linux_<arch>.deb (lower case). Both exist for every release; the .deb
   # gives a dpkg-exact idempotency gate. Stop `go install`-ing it — that build
   # reports its version as "dev" and can never be pinned.
-  k8s_deb k9s "${K9S_VERSION:?}" derailed/k9s 'k9s_linux_{arch_dpkg}.deb' \
-    --checksum-asset checksums.sha256
+  # The .rpm is k9s_linux_<arch>.rpm, lower case like the .deb; checksums.sha256
+  # lists all three. `k9s --version` is an unknown flag: `version --short`.
+  k8s_pkg k9s "${K9S_VERSION:?}" 'version --short' derailed/k9s \
+    --deb 'k9s_linux_{arch_dpkg}.deb' --rpm 'k9s_linux_{arch_go}.rpm' \
+    --tarball 'k9s_{Os}_{arch_go}.tar.gz' --checksum-asset checksums.sha256
 
   # kubecolor: the `kubectl` alias in ~/.bashrc.d/30-k8s.sh points here. Its own
-  # config is create-if-absent below.
-  k8s_deb kubecolor "${KUBECOLOR_VERSION:?}" kubecolor/kubecolor \
-    'kubecolor_{version}_linux_{arch_dpkg}.deb' --checksum-asset checksums.txt
+  # config is create-if-absent below. `kubecolor --version` is passed through to a
+  # kubectl that may not exist yet; --kubecolor-version is kubecolor's own.
+  k8s_pkg kubecolor "${KUBECOLOR_VERSION:?}" '--kubecolor-version' kubecolor/kubecolor \
+    --deb 'kubecolor_{version}_linux_{arch_dpkg}.deb' \
+    --rpm 'kubecolor_{version}_linux_{arch_go}.rpm' \
+    --tarball 'kubecolor_{version}_linux_{arch_go}.tar.gz' --checksum-asset checksums.txt
 
   # k3d — pinned release binary + the published checksums.txt. SPEC's `TAG=` +
   # vendor install script is deliberately NOT used: an unpinned `curl | bash`
@@ -535,12 +615,18 @@ k8s_core_tools() {
     --checksum-url 'https://github.com/kubernetes-sigs/cri-tools/releases/download/{tag}/crictl-{tag}-linux-{arch_go}.tar.gz.sha256'
 
   # dive — image-layer inspection; pairs with the k9s image plugin.
-  k8s_deb dive "${DIVE_VERSION:?}" wagoodman/dive 'dive_{version}_linux_{arch_dpkg}.deb' \
+  k8s_pkg dive "${DIVE_VERSION:?}" '--version' wagoodman/dive \
+    --deb 'dive_{version}_linux_{arch_dpkg}.deb' --rpm 'dive_{version}_linux_{arch_go}.rpm' \
+    --tarball 'dive_{version}_linux_{arch_go}.tar.gz' \
     --checksum-asset 'dive_{version}_checksums.txt'
 
-  # grpcurl — used against the fleet's Go services.
-  k8s_deb grpcurl "${GRPCURL_VERSION:?}" fullstorydev/grpcurl \
-    'grpcurl_{version}_linux_{arch_dpkg}.deb' \
+  # grpcurl — used against the fleet's Go services. Its ARCHIVE uses GoReleaser's
+  # x86_64 for amd64 while its packages say amd64 — exactly the case the deleted
+  # `.deb -> .tar.gz` guess got wrong — hence $K8S_ARCH_X.
+  k8s_pkg grpcurl "${GRPCURL_VERSION:?}" '-version' fullstorydev/grpcurl \
+    --deb 'grpcurl_{version}_linux_{arch_dpkg}.deb' \
+    --rpm 'grpcurl_{version}_linux_{arch_go}.rpm' \
+    --tarball "grpcurl_{version}_linux_${K8S_ARCH_X}.tar.gz" \
     --checksum-asset 'grpcurl_{version}_checksums.txt'
 
   k8s_yq
@@ -557,17 +643,28 @@ k8s_core_tools() {
 #   repo_ensure_trivy only sets NEED_APT_UPDATE=1; this is where it is honoured.
 #   pkg_install also returns 0 when it drops a name it could not find, so the
 #   outcome is decided by asking dpkg afterwards, not by that exit status.
+#   redhat and suse: the same vendor repository as a .repo file. arch: no vendor
+#   repository (78), so the distribution's own trivy (plan D6).
 k8s_trivy() {
   local rc=0
   repo_ensure_trivy || rc=$?
   case $rc in
     0) ;;
     78)
+      if [ "${OS_FAMILY:-debian}" != debian ]; then
+        pkg_install trivy || true
+        if pkg_installed trivy || is_dry_run; then
+          K8S_OK+=("trivy (${OS_DISTRO:-distribution} package)")
+        else
+          K8S_SKIPPED+=("trivy (no ${OS_DISTRO:-distribution} package)")
+        fi
+        return 0
+      fi
       K8S_SKIPPED+=("trivy")
       return 0
       ;;
     *)
-      K8S_FAILED+=("trivy apt repository")
+      K8S_FAILED+=("trivy ${OS_PKG_MGR:-apt} repository")
       return 0
       ;;
   esac
@@ -577,9 +674,9 @@ k8s_trivy() {
     return 0
   fi
   if pkg_installed trivy || is_dry_run; then
-    K8S_OK+=("trivy (apt)")
+    K8S_OK+=("trivy (${OS_PKG_MGR:-apt})")
   else
-    log_warn "the trivy repository is configured but apt found no 'trivy' candidate"
+    log_warn "the trivy repository is configured but ${OS_PKG_MGR:-apt} found no 'trivy' candidate"
     K8S_SKIPPED+=("trivy")
   fi
   return 0
@@ -605,8 +702,13 @@ k8s_optional_tools() {
     "stackrox publishes sigstore bundles (<asset>.sigstore.json) instead of a sha256 checksum file"
 
   # kube-bench — CIS benchmarks; pairs with the vm-hardening playbooks.
-  k8s_deb kube-bench "${KUBE_BENCH_VERSION:?}" aquasecurity/kube-bench \
-    'kube-bench_{version}_linux_{arch_dpkg}.deb' \
+  # No --tarball, deliberately: the archive is the binary beside a cfg/ tree of
+  # benchmark definitions that only the packages put where kube-bench looks
+  # (/etc/kube-bench/cfg). The binary alone fails on its first run, so on arch
+  # this is a skip with that reason rather than an install that cannot work.
+  k8s_pkg kube-bench "${KUBE_BENCH_VERSION:?}" 'version' aquasecurity/kube-bench \
+    --deb 'kube-bench_{version}_linux_{arch_dpkg}.deb' \
+    --rpm 'kube-bench_{version}_linux_{arch_go}.rpm' \
     --checksum-asset 'kube-bench_{version}_checksums.txt'
 
   # nerdctl — only useful ON a containerd node; docker covers the laptop.
@@ -688,7 +790,7 @@ k8s_completions() {
 # ---------------------------------------------------------------------------
 
 module_main() {
-  have_root || skip "the kubernetes tools install into /usr/local/bin and an apt repository; root is not available here"
+  have_root || skip "the kubernetes tools install into /usr/local/bin and a package repository; root is not available here"
   k8s_arch_init
 
   log_info "installing the kubernetes core into $K8S_BIN_DIR (arch ${OS_ARCH_DPKG:-unknown})"

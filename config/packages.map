@@ -1,0 +1,157 @@
+# config/packages.map — one package name, every family's spelling of it.
+#
+# Read by lib/pkg.sh (_pkg_map_load) and NOTHING else. Every module keeps ONE
+# list of what it installs, written in the Debian names it always used; this file
+# is the only place a family difference lives (spec 002 FR-007, plan D5).
+#
+#   debian-name   redhat   suse   arch
+#
+#   =         the same name as the Debian one
+#   -         no package on this family: pkg_install logs "no <family> package
+#             for <name>" and goes on — a skip, never a failure
+#   a,b,c     several packages stand for the one Debian name (all are installed)
+#
+# THE DEBIAN FAMILY NEVER READS THIS FILE (FR-008). pkg.sh answers before opening
+# it, so an apt box installs exactly the names the modules spell.
+#
+# A name with no row is looked up under its own spelling on every family. A row is
+# still written for every name a default-set module uses, so "no row" never means
+# "nobody checked". Names are matched the way each package manager resolves them
+# on install — by what a package PROVIDES — so `=` also holds where a release
+# ships the capability under another package name (Fedora's wget is wget2-wget,
+# Leap's ffmpeg is ffmpeg-7).
+#
+# redhat is ONE column for EL (AlmaLinux, Rocky) and Fedora. pkg_ensure_addon
+# (modules/00-preflight) enables CRB and EPEL on EL, so an EPEL name is simply the
+# redhat name. A name only some releases of a family carry stays here as that
+# name, and pkg_install drops it on the others with its usual "no installation
+# candidate" warning; `-` is for a family that has no such package at all.
+#
+# Every row was checked on 2026-10-06 against the releases' own repositories —
+# `dnf repoquery` on AlmaLinux 9/10, Rocky Linux 9/10 and Fedora 43/44 (EL with
+# CRB + EPEL), `zypper search` on openSUSE Leap 16.0, `pacman -Si` on Arch. The
+# trailing comment says where a name is NOT plain base-repository: "EPEL" means it
+# comes from EPEL on EL; a release that lacks it is named.
+#
+# One row per line, whitespace-separated, `#` to end of line is a comment.
+
+# --- 00-preflight: the bootstrap set ------------------------------------------
+ca-certificates             =                         =                               =
+curl                        =                         =                               =
+git                         =                         =                               =
+tar                         =                         =                               =
+xz-utils                    xz                        xz                              xz
+diffutils                   =                         =                               =
+findutils                   =                         =                               =
+
+# --- 05-base-packages: tier 1 -------------------------------------------------
+wget                        =                         =                               =                       # Fedora: wget2-wget provides it
+unzip                       =                         =                               =
+zip                         =                         =                               =
+build-essential             gcc,gcc-c++,make          gcc,gcc-c++,make                base-devel
+bash-completion             =                         =                               =
+less                        =                         =                               =
+vim                         vim-enhanced              vim                             vim
+htop                        =                         =                               =                       # EPEL
+tree                        =                         =                               =
+jq                          =                         =                               =
+psmisc                      =                         =                               =
+net-tools                   =                         net-tools,net-tools-deprecated  =                       # suse: ifconfig/netstat/route/arp are -deprecated
+ripgrep                     =                         =                               =                       # EPEL
+fd-find                     =                         fd                              fd                      # EPEL
+bat                         =                         =                               =                       # EPEL
+trash-cli                   =                         =                               =                       # EPEL 9 only; not in EL10 or Leap 16
+autojump                    =                         =                               -                       # EPEL; arch: AUR only
+
+# --- 05-base-packages: tier 2 (devops), also 45-cloud's diagnostics -----------
+bind9-dnsutils              bind-utils                bind-utils                      bind
+nmap                        =                         =                               =                       # not in Leap 16
+mtr-tiny                    mtr                       mtr                             mtr
+traceroute                  =                         =                               =
+tcpdump                     =                         =                               =
+iputils-ping                iputils                   iputils                         iputils
+apache2-utils               httpd-tools               apache2-utils                   apache
+sshpass                     =                         =                               =                       # EPEL
+cmake                       =                         =                               =
+pkg-config                  pkgconf-pkg-config        pkgconf-pkg-config              pkgconf
+libssl-dev                  openssl-devel             libopenssl-devel                openssl
+wireguard-tools             =                         =                               =
+
+# --- 05-base-packages: tier 3 (INSTALL_EXTRAS) --------------------------------
+multitail                   =                         =                               -                       # EPEL; not in Leap 16; arch: AUR only
+ipmitool                    =                         =                               =
+putty-tools                 putty                     putty                           putty                   # EPEL 9 only
+openjdk-17-jre-headless     java-25-openjdk-headless  java-17-openjdk-headless        jre17-openjdk-headless  # 17 is gone from EL10 and Fedora; 25 is the LTS all four carry
+clang                       =                         =                               =
+libclang-dev                clang-devel               clang-devel                     clang
+
+# --- 05-base-packages: the rest -----------------------------------------------
+nala                        -                         -                               -                       # an apt front-end
+tealdeer                    =                         =                               =                       # Fedora only on redhat; not in Leap 16
+tldr                        =                         =                               =                       # EPEL; not in Leap 16 (the release binary is the fallback)
+wireguard                   -                         -                               -                       # reported only: the dkms metapackage
+software-properties-common  -                         -                               -                       # add-apt-repository
+
+# --- 10-shell -----------------------------------------------------------------
+fzf                         =                         =                               =                       # EPEL
+zoxide                      =                         =                               =                       # EPEL 9 only; else the release binary
+gdu                         =                         =                               =                       # EPEL
+7zip                        =                         =                               =                       # EPEL
+p7zip-full                  p7zip,p7zip-plugins       7zip                            7zip                    # EPEL 9, Fedora 43; suse/arch: 7zip provides 7z
+duf                         =                         =                               =                       # EPEL
+fastfetch                   =                         =                               =                       # EPEL
+fontconfig                  =                         =                               =
+
+# --- 15-git -------------------------------------------------------------------
+git-delta                   =                         =                               =                       # EPEL 9 only; else the release binary
+
+# --- 20-lang-go: reported only ------------------------------------------------
+golang-go                   golang                    go                              go
+gccgo                       gcc-go                    gcc-go                          gcc-go                  # EPEL 9 / Fedora
+
+# --- 22-lang-node: reported only ----------------------------------------------
+nodejs                      =                         =                               =                       # Leap: nodejs22 provides it
+npm                         =                         =                               =
+
+# --- 28-repo-dev --------------------------------------------------------------
+shellcheck                  ShellCheck                ShellCheck                      =                       # EPEL
+
+# --- 30-containers (vendor repo on redhat; the distro's own docker elsewhere) -
+docker-ce                   =                         docker                          docker
+docker-ce-cli               =                         -                               -                       # part of `docker` off redhat
+containerd.io               =                         containerd                      containerd
+docker-buildx-plugin        =                         docker-buildx                   docker-buildx
+docker-compose-plugin       =                         docker-compose                  docker-compose
+
+# --- 35-kubernetes, 40-iac (the vendor's repo on redhat/suse; arch's own) ----
+kubectl                     =                         =                               -                       # pkgs.k8s.io off arch; arch: the dl.k8s.io stream binary (35), never Arch's
+trivy                       =                         =                               =                       # get.trivy.dev off arch
+terraform                   =                         -                               =                       # HashiCorp's repo on redhat; the release zip on suse
+packer                      =                         -                               =                       # HashiCorp's repo on redhat
+
+# --- 38-auth-sso --------------------------------------------------------------
+qrencode                    =                         =                               =                       # EPEL
+
+# --- 45-cloud -----------------------------------------------------------------
+gh                          =                         =                               github-cli              # EPEL on EL
+azure-cli                   =                         -                               -                       # EPEL 9 / Fedora / Microsoft's repo; uv elsewhere
+
+# --- 50-editors ---------------------------------------------------------------
+libevent-dev                libevent-devel            libevent-devel                  libevent
+libncurses-dev              ncurses-devel             ncurses-devel                   ncurses
+bison                       =                         =                               =
+autoconf                    =                         =                               =
+automake                    =                         =                               =
+tmux                        =                         =                               =
+neovim                      =                         =                               =                       # EPEL
+
+# --- 55-media -----------------------------------------------------------------
+ffmpeg                      ffmpeg-free               =                               =                       # EPEL; Leap: ffmpeg-7 provides it
+imagemagick                 ImageMagick               ImageMagick                     =                       # EPEL
+poppler-utils               =                         poppler-tools                   poppler
+exiftool                    perl-Image-ExifTool       exiftool                        perl-image-exiftool     # EPEL
+libimage-exiftool-perl      perl-Image-ExifTool       exiftool                        perl-image-exiftool     # EPEL
+resvg                       -                         -                               =                       # in neither EL, EPEL, Fedora nor Leap
+
+# --- 70-wsl -------------------------------------------------------------------
+wslu                        -                         -                               -                       # Ubuntu's universe only

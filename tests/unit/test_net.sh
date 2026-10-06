@@ -127,4 +127,146 @@ assert_fail 'so is the version-less copy the old cache layout left' test -e "$ca
 assert_ok 'another asset is left alone' test -f "$cache_dl/v5.9.0.kind-linux-amd64"
 assert_ok 'and so is a checksum file' test -f "$cache_dl/v5.9.0.checksums.txt"
 
+# ===========================================================================
+# spec 002 FR-015 / P3: a package file is installed by a package manager, or not
+# at all — never placed where an executable belongs.
+# ===========================================================================
+#
+# The network, the package manager and the archive installer are stubs that
+# record what they were handed. http_ok answers 2xx for the URLs in $PUBLISHED.
+
+OS_ARCH_DPKG=amd64 OS_ARCH_GO=amd64 OS_ARCH_UNAME=x86_64 OS_ARCH_RUST=x86_64
+CALLS="$T_SANDBOX/calls.log"
+PUBLISHED=''
+INSTALLED=''
+http_ok() { case " $PUBLISHED " in *" $1 "*) return 0 ;; *) return 1 ;; esac }
+download() {
+  printf 'download %s\n' "$1" >>"$CALLS"
+  is_dry_run && return 0
+  mkdir -p "$(dirname -- "$2")" && printf 'payload of %s\n' "${1##*/}" >"$2"
+}
+pkg_install_local() { printf 'pkg_install_local %s\n' "${1##*/}" >>"$CALLS"; }
+gh_release_install() { printf 'gh_release_install %s\n' "$*" >>"$CALLS"; }
+installed_pkg_version() { [ -n "$INSTALLED" ] && printf '%s\n' "$INSTALLED"; }
+
+GH=https://github.com/acme/tool/releases/download/v1.2.3
+tool_release() {
+  pkg_release_install acme/tool tool v1.2.3 \
+    --deb 'tool_{version}_linux_{arch_dpkg}.deb' --rpm 'tool_{version}_linux_{arch_go}.rpm' \
+    --tarball 'tool_{version}_linux_{arch_go}.tar.gz' \
+    --no-verify --no-verify-reason 'a unit test'
+}
+
+t_section 'pkg_release_install: one package mechanism per family'
+
+: >"$CALLS"
+OS_PKG_MGR=apt PUBLISHED="$GH/tool_1.2.3_linux_amd64.deb"
+tool_release 2>/dev/null
+assert_eq "download $GH/tool_1.2.3_linux_amd64.deb
+pkg_install_local v1.2.3.tool_1.2.3_linux_amd64.deb" "$(cat "$CALLS")" \
+  'apt: the .deb, through the package manager'
+
+: >"$CALLS"
+OS_PKG_MGR=dnf PUBLISHED="$GH/tool_1.2.3_linux_amd64.rpm"
+tool_release 2>/dev/null
+assert_eq "download $GH/tool_1.2.3_linux_amd64.rpm
+pkg_install_local v1.2.3.tool_1.2.3_linux_amd64.rpm" "$(cat "$CALLS")" \
+  'dnf: the .rpm of the same release'
+
+: >"$CALLS"
+OS_PKG_MGR=zypper PUBLISHED="$GH/tool_1.2.3_linux_amd64.rpm"
+tool_release 2>/dev/null
+assert_contains "$(cat "$CALLS")" 'pkg_install_local v1.2.3.tool_1.2.3_linux_amd64.rpm' \
+  'zypper: the .rpm as well'
+
+: >"$CALLS"
+OS_PKG_MGR=pacman PUBLISHED=''
+tool_release 2>/dev/null
+assert_eq "gh_release_install acme/tool tool_{version}_linux_{arch_go}.tar.gz tool v1.2.3 --base-url $GH --no-verify --no-verify-reason a unit test" \
+  "$(cat "$CALLS")" 'pacman: the archive — and only the archive'
+
+: >"$CALLS"
+OS_PKG_MGR=dnf PUBLISHED=''
+tool_release 2>/dev/null
+assert_contains "$(cat "$CALLS")" 'gh_release_install acme/tool tool_{version}_linux_{arch_go}.tar.gz' \
+  'a 404 .rpm falls back to the archive the call site named'
+assert_eq 0 "$(grep -c 'pkg_install_local' "$CALLS" || true)" 'and installs no package file'
+
+t_section 'the old fallbacks are gone (spec 002 P3)'
+
+: >"$CALLS"
+OS_PKG_MGR=apt PUBLISHED=''
+assert_status 78 'a 404 .deb with no archive named is a skip' \
+  pkg_release_install acme/tool tool v1.2.3 --deb 'tool_{version}_linux_{arch_dpkg}.deb' \
+  --no-verify --no-verify-reason 'a unit test'
+assert_eq '' "$(cat "$CALLS")" 'and no archive name is guessed from the package name'
+
+: >"$CALLS"
+OS_PKG_MGR=pacman
+assert_status 78 'pacman with no archive is a skip, not a .deb installed as a binary' \
+  pkg_release_install acme/tool tool v1.2.3 --deb 'tool_{version}_linux_{arch_dpkg}.deb' \
+  --rpm 'tool_{version}_linux_{arch_go}.rpm' --no-verify --no-verify-reason 'a unit test'
+assert_eq '' "$(cat "$CALLS")" 'nothing at all was handed on'
+
+t_section 'idempotency and --dry-run'
+
+: >"$CALLS"
+OS_PKG_MGR=apt PUBLISHED="$GH/tool_1.2.3_linux_amd64.deb" INSTALLED='1.2.3-1'
+tool_release 2>/dev/null
+assert_eq '' "$(cat "$CALLS")" 'apt: dpkg already has {version}-<revision> — no network at all'
+OS_PKG_MGR=dnf INSTALLED='1.2.3-1'
+tool_release 2>/dev/null
+assert_eq '' "$(cat "$CALLS")" 'dnf: rpm already has {version}-<release> — no network at all'
+INSTALLED='1.2.2-1'
+DEVENV_DRY_RUN=1 tool_release 2>/dev/null
+assert_eq '' "$(cat "$CALLS")" 'an upgrade under --dry-run downloads and installs nothing'
+INSTALLED=''
+
+t_section '--base-url: a release that does not live on GitHub'
+
+: >"$CALLS"
+OS_PKG_MGR=dnf
+GL='https://gitlab.com/gitlab-org/cli/-/releases/v1.120.0/downloads'
+PUBLISHED="$GL/glab_1.120.0_linux_amd64.rpm"
+pkg_release_install gitlab-org/cli glab v1.120.0 \
+  --base-url 'https://gitlab.com/gitlab-org/cli/-/releases/{tag}/downloads' \
+  --deb 'glab_{version}_linux_amd64.deb' --rpm 'glab_{version}_linux_amd64.rpm' \
+  --no-verify --no-verify-reason 'a unit test' 2>/dev/null
+assert_contains "$(cat "$CALLS")" "download $GL/glab_1.120.0_linux_amd64.rpm" \
+  'the asset is fetched from the expanded base, not from github.com'
+
+t_section 'http_ok: published, absent, or could not tell'
+
+# The real http_ok again — the release-install tests above replaced it with a
+# stub. curl is stubbed instead: it prints the final status code the way
+# `-w %{http_code}` does, and fails like a transport error when asked to.
+# shellcheck source=/dev/null
+source <(sed -n '/^http_ok() {/,/^}/p' "$DEVENV_HOME/lib/net.sh")
+FAKE_CODE=200 FAKE_FAIL=0
+# shellcheck disable=SC2329  # invoked by http_ok, through the name curl
+curl() {
+  printf '%s' "$FAKE_CODE"
+  [ "$FAKE_FAIL" = 0 ]
+}
+http_rc() {
+  local rc=0
+  http_ok https://example.invalid/asset || rc=$?
+  printf '%s' "$rc"
+}
+FAKE_CODE=200
+assert_eq 0 "$(http_rc)" 'a 2xx is published'
+FAKE_CODE=404
+assert_eq 1 "$(http_rc)" 'a 404 is absent — the only answer a caller may skip on'
+FAKE_CODE=410
+assert_eq 1 "$(http_rc)" 'a 410 is absent'
+FAKE_CODE=503
+assert_eq 2 "$(http_rc)" 'a 5xx is "could not tell", never "absent"'
+FAKE_CODE=429
+assert_eq 2 "$(http_rc)" 'a 429 rate limit is "could not tell"'
+FAKE_CODE=403
+assert_eq 2 "$(http_rc)" 'a 403 (GitHub rate limit) is "could not tell"'
+FAKE_CODE=000 FAKE_FAIL=1
+assert_eq 2 "$(http_rc)" 'a transport failure is "could not tell"'
+unset -f curl
+
 t_summary

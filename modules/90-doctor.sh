@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # meta: name=doctor
-# meta: desc=read-only audit of the shell, apt sources, kubernetes, sso and wsl setup
+# meta: desc=read-only audit of the shell, package sources, kubernetes, sso and wsl setup
 # meta: profiles=devops,full
 # meta: os=any
 # meta: root=no
@@ -15,7 +15,7 @@
 #       shell drop-ins and ~/.bashrc  -> `devenv --only migrate --apply`
 #       browser shim and sso files    -> `devenv --only auth-sso`
 #       k9s config                    -> `devenv --only k9s-config`
-#       apt sources and keyrings      -> the module that added them
+#       package sources and keys      -> the module that added them
 #       desktop residue               -> `devenv --only purge-desktop`
 #   * and MUST-FIX S9/S11/S12 forbid the tempting ones outright: no package is
 #     removed here, nothing under ~/.kube is ever proposed for deletion, and
@@ -89,8 +89,10 @@ section_end() { log_step_end; }
 check_platform() {
   section 'platform'
   os_summary
+  # os_require_supported says "untested" itself, once per run — preflight has
+  # usually said it already — so the line here states the fact and adds no notice.
   if os_require_supported; then
-    ok "supported platform: ${OS_PRETTY:-unknown} (${OS_ARCH_DPKG:-unknown})"
+    ok "supported platform: ${OS_PRETTY:-unknown} (${OS_ARCH_DPKG:-unknown}; ${OS_FAMILY} family, ${OS_SUPPORT} release)"
   else
     fail "unsupported platform: ${OS_PRETTY:-unknown}"
   fi
@@ -101,8 +103,121 @@ check_platform() {
 }
 
 # ---------------------------------------------------------------------------
-# apt sources
+# package sources
 # ---------------------------------------------------------------------------
+
+# check_pkg_sources — the package-source audit for THIS family's package manager.
+#   apt has the full audit below; dnf and zypper get the same questions asked of
+#   their .repo files; pacman gets an explicit n/a, because no vendor publishes a
+#   pacman repository and this repository therefore configures none.
+check_pkg_sources() {
+  case ${OS_PKG_MGR:-} in
+    apt) check_apt ;;
+    dnf) check_rpm_sources dnf /etc/yum.repos.d ;;
+    zypper) check_rpm_sources zypper /etc/zypp/repos.d ;;
+    *)
+      section 'package sources'
+      log_skip "${OS_PKG_MGR:-package} sources: n/a — this repository adds no ${OS_PKG_MGR:-third-party} repository"
+      section_end
+      ;;
+  esac
+}
+
+# _check_k8s_pin LABEL DIR — Kubernetes pinned to a minor this repo does not target.
+#   pkgs.k8s.io publishes one repository per minor, in the same URL shape for deb
+#   and rpm, so one check serves every package manager.
+#   `|| pinned=''` is load-bearing: with `set -o pipefail` a grep that matches
+#   nothing fails the whole pipeline, the assignment fails, and the ERR trap turns
+#   "this box has no kubernetes source" into `doctor failed (exit 1)`. The container
+#   matrix caught exactly that on all four images — a fresh box has no such source.
+_check_k8s_pin() {
+  local label=$1 dir=$2 pinned
+  pinned=$(grep -rhoE 'pkgs\.k8s\.io/core:/stable:/v[0-9]+\.[0-9]+' "$dir" 2>/dev/null \
+    | grep -oE 'v[0-9]+\.[0-9]+' | sort -u | head -n1) || pinned=''
+  [ -n "$pinned" ] || return 0
+  if [ "$pinned" = "${K8S_MINOR:-}" ]; then
+    ok "$label: kubernetes repo is on $pinned"
+  else
+    warn "$label: kubernetes repo is pinned to $pinned, this repo targets ${K8S_MINOR:-unset}"
+    plan 'devenv --only kubernetes        # rewrites the suite, never downgrades silently'
+  fi
+  return 0
+}
+
+# _rpm_unverified FILE — prints each ENABLED section of a .repo file that sets
+#   gpgcheck=0, one per line. Prints nothing when there is none. Always 0.
+_rpm_unverified() {
+  awk '
+    function flush() { if (sec != "" && en != "0" && gc == "0") print sec }
+    /^[[:space:]]*\[/ { flush(); sec = $0; gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", sec); en = "1"; gc = ""; next }
+    { line = $0; gsub(/[[:space:]]/, "", line) }
+    line ~ /^enabled=/ { en = substr(line, 9) }
+    line ~ /^gpgcheck=/ { gc = substr(line, 10) }
+    END { flush() }' "$1" 2>/dev/null || true
+}
+
+# check_rpm_sources LABEL DIR — the apt audit's questions, asked of .repo files:
+#   is every enabled repository signature-checked, does every local key it names
+#   exist, does a docker repository point at THIS distribution's tree, and is
+#   kubernetes on the minor this repo targets.
+check_rpm_sources() {
+  local label=$1 dir=$2 f sec n_unverified=0
+  section "$label sources"
+  if [ ! -d "$dir" ]; then
+    ok "no $dir on this box"
+    section_end
+    return 0
+  fi
+
+  for f in "$dir"/*.repo; do
+    [ -f "$f" ] || continue
+    while IFS= read -r sec; do
+      [ -n "$sec" ] || continue
+      warn "$label: [$sec] in $f is enabled with gpgcheck=0 — its packages are not verified"
+      n_unverified=$((n_unverified + 1))
+    done < <(_rpm_unverified "$f")
+  done
+  if [ "$n_unverified" = 0 ]; then ok "$label: every enabled repository checks signatures"; fi
+
+  # A gpgkey=file:// that is missing makes that repository unusable. The paths
+  # may carry dnf's own variables (Fedora's name $releasever and $basearch):
+  # those two are resolved, and a path still holding a variable is not judged.
+  local keys key n_missing=0
+  # shellcheck disable=SC2016  # the $ in '$releasever' is dnf's, matched literally
+  keys=$(grep -hE '^[[:space:]]*gpgkey[[:space:]]*=' "$dir"/*.repo 2>/dev/null \
+    | sed 's/^[^=]*=//' | tr ',' ' ' | tr ' ' '\n' | sed -n 's#^[[:space:]]*file://##p' \
+    | sed -e 's/\$releasever\b/'"${OS_VERSION_MAJOR:-}"'/g' -e 's/\$basearch\b/'"${OS_ARCH_RPM:-}"'/g' \
+    | sort -u) || keys=''
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    case $key in *'$'*) continue ;; esac
+    if [ ! -s "$key" ]; then
+      fail "$label: key $key is missing or empty — that repository cannot be verified"
+      hint 're-run the module that added that repository: it imports its key again'
+      n_missing=$((n_missing + 1))
+    fi
+  done <<<"$keys"
+  if [ "$n_missing" = 0 ]; then ok "$label: every local key a repository names exists and is non-empty"; fi
+
+  # The docker tree must match the distribution: Fedora has its own, the EL
+  # rebuilds take the centos one.
+  if [ "$label" = dnf ]; then
+    local wrong='linux/fedora' bad=0
+    [ "${OS_DISTRO:-}" = fedora ] && wrong='linux/(centos|rhel)'
+    for f in "$dir"/docker*.repo; do
+      [ -f "$f" ] || continue
+      if grep -qE "download\.docker\.com/$wrong" "$f" 2>/dev/null; then
+        fail "$label: $f points at the wrong docker tree for ${OS_DISTRO:-this distribution}"
+        plan 'devenv --only containers        # rewrites the docker source correctly'
+        bad=1
+      fi
+    done
+    if [ "$bad" = 0 ]; then ok "$label: docker source (if any) matches this distro"; fi
+  fi
+
+  _check_k8s_pin "$label" "$dir"
+  section_end
+}
 
 # _apt_uris FILE — prints every http(s) URI configured in FILE, one per line.
 _apt_uris() {
@@ -196,21 +311,7 @@ check_apt() {
   if [ "$n_missing" = 0 ]; then ok 'apt: every referenced keyring exists and is non-empty'; fi
 
   # Kubernetes pinned to a minor that upstream no longer publishes.
-  # `|| true` is load-bearing: with `set -o pipefail` a grep that matches nothing
-  # fails the whole pipeline, the assignment fails, and the ERR trap turns "this
-  # box has no kubernetes apt source" into `doctor failed (exit 1)`. The container
-  # matrix caught exactly that on all four images — a fresh box has no such source.
-  local pinned
-  pinned=$(grep -rhoE 'pkgs\.k8s\.io/core:/stable:/v[0-9]+\.[0-9]+' "$dir" 2>/dev/null \
-    | grep -oE 'v[0-9]+\.[0-9]+' | sort -u | head -n1) || pinned=''
-  if [ -n "$pinned" ]; then
-    if [ "$pinned" = "${K8S_MINOR:-}" ]; then
-      ok "apt: kubernetes repo is on $pinned"
-    else
-      warn "apt: kubernetes repo is pinned to $pinned, this repo targets ${K8S_MINOR:-unset}"
-      plan 'devenv --only kubernetes        # rewrites the suite, never downgrades silently'
-    fi
-  fi
+  _check_k8s_pin apt "$dir"
   section_end
 }
 
@@ -435,11 +536,11 @@ check_path() {
     plan 'devenv --only purge-desktop       # reports first, removes only on confirm'
   fi
 
-  # apt `yq` is kislyuk's python wrapper; mikefarah's is the one every script here
-  # assumes. Report, never remove (MUST-FIX S9).
+  # The distribution's `yq` is kislyuk's python wrapper on Debian and Arch;
+  # mikefarah's is the one every script here assumes. Report, never remove (S9).
   if have yq && ! yq --version 2>&1 | grep -q mikefarah; then
     if pkg_installed yq; then
-      warn 'the apt yq package is installed; this repo assumes mikefarah/yq v4'
+      warn 'the distribution yq package is installed; this repo assumes mikefarah/yq v4'
       hint 'both can coexist - check "yq --version" before trusting a script'
     fi
   fi
@@ -1006,8 +1107,8 @@ check_git() {
       hint 'the scoped replacement is:'
       hint '  git config --global --unset http.sslVerify'
       hint '  git config --global http."https://<your-host>/".sslCAInfo /path/to/ca.crt'
-      hint 'install the CA once with: sudo cp ca.crt /usr/local/share/ca-certificates/ &&'
-      hint '  sudo update-ca-certificates'
+      hint "install the CA once with: sudo cp ca.crt $FAM_CA_ANCHOR_DIR/ &&"
+      hint "  sudo $FAM_CA_REFRESH"
       ;;
     *) ok 'git verifies TLS certificates' ;;
   esac
@@ -1107,7 +1208,7 @@ print_summary() {
 
 module_main() {
   check_platform
-  check_apt
+  check_pkg_sources
   check_shell
   check_path
   check_usr_local

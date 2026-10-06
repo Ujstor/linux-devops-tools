@@ -73,16 +73,41 @@ fi
 DEVENV_RUNDIR_OWNER=${DEVENV_RUNDIR_OWNER:-0}
 export DEVENV_RUNDIR DEVENV_RUNDIR_OWNER
 
+# _devenv_scratch   (private)
+#   Prints this PROCESS's scratch directory, $DEVENV_RUNDIR/p.<pid>, creating it on
+#   first use. Every module runs as its own process, and its EXIT trap removes its
+#   own p.<pid> (_devenv_on_exit), so a module's downloads are gone when the module
+#   is. They used to live until the end of the whole run: on a box whose /tmp is a
+#   tmpfs at half the RAM (Debian 13, Fedora, Arch — 988 MB on a 2 GB lab guest)
+#   the default set's tarballs filled it by the kubernetes module, and everything
+#   after failed with "No space left on device". The run directory's own files
+#   (changed, summary, execroot, the refresh stamps) stay at its top, shared.
+#   A command substitution keeps its parent's $$, so `$(devenv_tmpdir)` lands in
+#   the caller's directory, as it must.
+_devenv_scratch() {
+  local d="$DEVENV_RUNDIR/p.$$"
+  [ -d "$d" ] || mkdir -p -- "$d" || return 1
+  printf '%s\n' "$d"
+}
+
 # devenv_tmpdir
-#   Prints a fresh empty directory under $DEVENV_RUNDIR. Removed by the EXIT trap of
-#   whichever process created the run directory. Returns 1 when it cannot be made.
+#   Prints a fresh empty directory in this process's scratch (see _devenv_scratch):
+#   removed when this process exits. Returns 1 when it cannot be made.
 #   NOT executable: use devenv_execdir when something in it has to be run.
-devenv_tmpdir() { mktemp -d "$DEVENV_RUNDIR/d.XXXXXXXX"; }
+devenv_tmpdir() {
+  local d
+  d=$(_devenv_scratch) || return 1
+  mktemp -d "$d/d.XXXXXXXX"
+}
 
 # devenv_tmpfile
-#   Prints a fresh empty file under $DEVENV_RUNDIR. Same lifetime as devenv_tmpdir.
-#   NOT executable: use devenv_execdir when it has to be run.
-devenv_tmpfile() { mktemp "$DEVENV_RUNDIR/f.XXXXXXXX"; }
+#   Prints a fresh empty file in this process's scratch. Same lifetime as
+#   devenv_tmpdir. NOT executable: use devenv_execdir when it has to be run.
+devenv_tmpfile() {
+  local d
+  d=$(_devenv_scratch) || return 1
+  mktemp "$d/f.XXXXXXXX"
+}
 
 # ---------------------------------------------------------------------------
 # Exec-capable scratch  ($DEVENV_EXECROOT / devenv_execdir)
@@ -393,6 +418,10 @@ _devenv_on_err() {
 # against the shape mktemp gave them before anything is removed.
 _devenv_on_exit() {
   local rc=$?
+  # This process's own scratch, whoever it is (see _devenv_scratch).
+  if [ -n "${DEVENV_RUNDIR:-}" ] && [ -d "$DEVENV_RUNDIR/p.$$" ]; then
+    rm -rf -- "${DEVENV_RUNDIR:?}/p.$$"
+  fi
   if [ "${DEVENV_RUNDIR_OWNER:-0}" = "$$" ] && [ -n "${DEVENV_RUNDIR:-}" ]; then
     # The exec root FIRST: the path is recorded inside the run directory, so
     # removing that one first would throw away the note saying what to clean.

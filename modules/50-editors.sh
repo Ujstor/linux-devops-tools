@@ -102,10 +102,19 @@ install_neovim() {
     changed "neovim $ver"
     return 0
   fi
-  if ! http_ok "$url"; then
-    log_warn "no asset $asset in neovim $tag"
-    return 0
-  fi
+  local hrc=0
+  http_ok "$url" || hrc=$?
+  case $hrc in
+    0) ;;
+    1)
+      log_warn "no asset $asset in neovim $tag"
+      return 0
+      ;;
+    *)
+      log_error "neovim: could not reach $url (network or server error)"
+      return 1
+      ;;
+  esac
 
   dl="${DEVENV_CACHE:?}/dl"
   ensure_dir "$dl" || return 1
@@ -135,6 +144,7 @@ install_neovim() {
   # end up owned by uid 1001: whichever account holds that uid on this box (often
   # the second human user) could then replace any binary root runs.
   run_sudo tar -C "$NVIM_PREFIX" --strip-components=1 --no-same-owner -xzf "$ar" || return 1
+  fs_selinux_relabel "$NVIM_PREFIX/bin/nvim"
   log_success "installed neovim $ver -> $NVIM_PREFIX/bin/nvim"
   changed "neovim $ver"
   return 0
@@ -163,7 +173,7 @@ install_neovim() {
 # too. That costs a few minutes of CPU once; the version gate makes every later
 # run free.
 
-TS_REPO=tree-sitter/tree-sitter
+TS_REPO='tree-sitter/tree-sitter'
 
 # ts_asset — upstream's own arch spelling, which matches no {token}: x64 for
 # amd64, arm64 for arm64. Returns 1 anywhere else; the cargo build still covers an
@@ -196,10 +206,11 @@ ts_version_of() {
 ts_place() {
   local src=$1 dest=$2
   if [ "$dest" = "$NVIM_PREFIX/bin" ]; then
-    run_sudo install -m 0755 -- "$src" "$dest/tree-sitter"
+    run_sudo install -m 0755 -- "$src" "$dest/tree-sitter" || return 1
   else
-    run install -m 0755 -- "$src" "$dest/tree-sitter"
+    run install -m 0755 -- "$src" "$dest/tree-sitter" || return 1
   fi
+  fs_selinux_relabel "$dest/tree-sitter"
 }
 
 # ts_install_release TAG DEST
@@ -268,9 +279,12 @@ ts_install_release() {
 # dlopen()s it while BUILDING rquickjs-sys, a dependency of tree-sitter-cli 0.26,
 # and without it the build dies minutes in with "Unable to find libclang".
 # libclang-cpp is a different library and deliberately does not match.
+# Debian keeps it under llvm-N/ or the multiarch directory; EL, Fedora and
+# openSUSE in /usr/lib64 (clang-libs, libclang13); Arch directly in /usr/lib.
 ts_have_libclang() {
   local f
-  for f in /usr/lib/llvm-*/lib/libclang.so* /usr/lib/*/libclang.so* /usr/lib/*/libclang-[0-9]*.so*; do
+  for f in /usr/lib/llvm-*/lib/libclang.so* /usr/lib/*/libclang.so* /usr/lib/*/libclang-[0-9]*.so* \
+    /usr/lib64/libclang.so* /usr/lib64/libclang-[0-9]*.so* /usr/lib/libclang.so*; do
     [ -e "$f" ] && return 0
   done
   return 1
@@ -313,7 +327,7 @@ ts_install_cargo() {
   # that cannot link would fail minutes in on EVERY run instead of once, here.
   if ! have cc || ! ts_have_libclang; then
     log_warn "building tree-sitter-cli needs a C compiler and libclang, and this box lacks one."
-    log_warn "  as root:  apt-get install build-essential clang libclang-dev   then re-run this module"
+    log_warn "  as root:  $(pkg_hint install build-essential clang libclang-dev)   then re-run this module"
     return 1
   fi
   work=$(devenv_execdir) || return 1

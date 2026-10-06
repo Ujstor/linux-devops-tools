@@ -11,10 +11,16 @@
 #
 #   terraform, packer          HashiCorp apt repository (suite from an allowlist,
 #                              never a probe — three of their suites answer 200
-#                              with an EMPTY index, see lib/repo.sh)
+#                              with an EMPTY index, see lib/repo.sh); its rpm
+#                              repository on redhat. Where HashiCorp publishes no
+#                              repository (suse, a release it has dropped) the
+#                              distribution's terraform when there is one (arch),
+#                              else the release zip, SHA256SUMS-verified, pinned as
+#                              TERRAFORM_RELEASE_VERSION (plan D6)
 #   terraform-docs, tflint     pinned GitHub releases, sha256-verified
-#   bao (OpenBao)              pinned release .deb; dpkg package `openbao`,
-#                              binary `bao` (MUST-FIX C5)
+#   bao (OpenBao)              pinned release .deb (.rpm on redhat/suse, the
+#                              archive on arch); package `openbao`, binary `bao`
+#                              (MUST-FIX C5)
 #   ansible + collection deps  uv tool venvs (D7/K34)
 #   ansible-lint, checkov,     uv tool venvs
 #   yamllint, detect-secrets
@@ -41,6 +47,14 @@
 set -euo pipefail
 # shellcheck source=lib/common.sh
 source "${DEVENV_HOME:?}/lib/common.sh"
+
+# Every `terraform version` this module runs (the version gate, the summary)
+# otherwise phones HashiCorp's checkpoint service and writes
+# ~/.terraform.d/checkpoint_cache and checkpoint_signature — so a second run that
+# installs nothing still changes the home directory (seen on openSUSE Leap, where
+# terraform comes from the release zip and the gate runs the binary). Scoped to
+# this module's processes; the operator's own terraform is unaffected.
+export CHECKPOINT_DISABLE=1
 
 # apt_run CMD [ARGS…]
 #   Runs ONE lib/pkg.sh helper with `pipefail` switched off, and restores it.
@@ -108,12 +122,51 @@ _iac_release_result() {
   return 0
 }
 
+# _iac_terraform_release
+#   terraform from releases.hashicorp.com, for a machine HashiCorp's package
+#   repositories do not serve: the zip of TERRAFORM_RELEASE_VERSION, verified
+#   against the release's own terraform_<version>_SHA256SUMS, into /usr/local/bin.
+#   `terraform --version` is the idempotency gate. HashiCorp publishes no
+#   `latest` the repository's sentinel could follow, which is why this path has a
+#   pin of its own while TERRAFORM_VERSION stays `apt`.
+#   Always returns 0.
+_iac_terraform_release() {
+  local rc=0
+  if ! have unzip; then
+    log_skip "terraform ships a .zip and unzip is not installed — run 'devenv --only base-packages'"
+    return 0
+  fi
+  gh_release_install hashicorp/terraform 'terraform_{version}_{os}_{arch_go}.zip' terraform \
+    "${TERRAFORM_RELEASE_VERSION:?TERRAFORM_RELEASE_VERSION is not set}" \
+    --base-url 'https://releases.hashicorp.com/terraform/{version}' \
+    --checksum-asset 'terraform_{version}_SHA256SUMS' || rc=$?
+  _iac_release_result terraform "$rc"
+  return 0
+}
+
 # _iac_hashicorp
 #   The HashiCorp apt repository, then terraform, then packer when
 #   INSTALL_PACKER=1 (the `full` profile sets it). Always returns 0.
+#   Off the Debian family, 78 from the repository means HashiCorp publishes none
+#   for this machine; plan D6's order then applies — the distribution's own
+#   package (Arch has terraform and packer; config/packages.map says which family
+#   has none), else, for terraform, the verified release zip. packer has no
+#   release path here: no package and no repository is a skip with that reason.
 _iac_hashicorp() {
   local rc=0
   repo_ensure_hashicorp || rc=$?
+  if [ "$rc" = 78 ] && [ "${OS_FAMILY:-debian}" != debian ]; then
+    if apt_run pkg_install_first terraform; then
+      log_info "terraform: the ${OS_DISTRO:-distribution}'s own package (HashiCorp publishes no repository here)"
+    else
+      _iac_terraform_release
+    fi
+    if [ "${INSTALL_PACKER:-0}" = 1 ] && ! apt_run pkg_install_first packer; then
+      log_skip "packer: no HashiCorp repository and no ${OS_DISTRO:-distribution} package for ${OS_PRETTY:-this release}"
+    fi
+    comp_complete_c terraform tf t terraform
+    return 0
+  fi
   if [ "$rc" != 0 ]; then
     log_warn "HashiCorp publishes no apt suite usable on ${OS_PRETTY:-this release}."
     log_warn "  terraform and packer are not installed. Install terraform by hand from"
@@ -185,13 +238,19 @@ _iac_tflint() {
 #   self-signed certificate under /opt/openbao/tls. Its postinst does a
 #   daemon-reload and nothing else — the unit is NOT enabled and NOT started, by
 #   the vendor's choice and ours. This module only ever wants the `bao` CLI.
+#   The .rpm is the same distribution with the same scriptlets (a system user,
+#   the certificate, a daemon-reload; it requires openssl). On arch, the release
+#   archive: `bao` alone, which is all this module wants anyway. checksums.txt
+#   lists all three.
 #   Always returns 0.
 _iac_openbao() {
   local rc=0
-  deb_release_install openbao/openbao \
-    'openbao_{version}_linux_{arch_dpkg}.deb' openbao \
+  pkg_release_install openbao/openbao openbao \
     "${OPENBAO_VERSION:?OPENBAO_VERSION is not set}" \
-    --bin bao --checksum-asset checksums.txt || rc=$?
+    --deb 'openbao_{version}_linux_{arch_dpkg}.deb' \
+    --rpm 'openbao_{version}_linux_{arch_go}.rpm' \
+    --tarball 'openbao_{version}_linux_{arch_go}.tar.gz' \
+    --bin bao --version-cmd version --checksum-asset checksums.txt || rc=$?
   _iac_release_result bao "$rc"
   # No completion cache for `bao`: it has no completion subcommand (MUST-FIX C3).
   # `bao -autocomplete-install` writes to the user's shell rc file, which this
@@ -203,6 +262,8 @@ _iac_openbao() {
 #   Misconfiguration and vulnerability scanning for terraform, Kubernetes
 #   manifests and images. Owned by `kubernetes`; installed here only when it is
 #   missing, so the two modules can never both act in the same run.
+#   Off the Debian family a 78 (arch: no vendor repository) takes the
+#   distribution's own trivy, as module 35 does.
 #   Always returns 0.
 _iac_trivy() {
   local rc=0
@@ -211,8 +272,10 @@ _iac_trivy() {
     return 0
   fi
   repo_ensure_trivy || rc=$?
-  if [ "$rc" != 0 ]; then
-    log_warn "the trivy apt repository could not be configured — skipping trivy"
+  if [ "$rc" = 78 ] && [ "${OS_FAMILY:-debian}" != debian ]; then
+    : # no vendor repository here: pkg_install below takes the distribution's trivy
+  elif [ "$rc" != 0 ]; then
+    log_warn "the trivy ${OS_PKG_MGR:-apt} repository could not be configured — skipping trivy"
     return 0
   fi
   pkg_update

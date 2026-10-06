@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # meta: name=containers
-# meta: desc=docker engine from the vendor apt repository
+# meta: desc=docker engine from the vendor repository, or the distribution's own
 # meta: profiles=devops,full
 # meta: os=!container
 # meta: arch=amd64,arm64
@@ -8,6 +8,12 @@
 # meta: root=yes
 #
 # modules/30-containers.sh — Docker CE, installed the careful way.
+#
+# WHERE IT COMES FROM (spec 002, plan D6). Docker's own repository on the Debian
+# and RedHat families (lib/repo.sh's repo_ensure_docker: deb822 on one, a .repo
+# file on the other). Docker builds nothing for openSUSE or Arch, so there the
+# distribution's own docker, docker-buildx and docker-compose are installed —
+# config/packages.map turns this module's one package list into those names.
 #
 # FOUR THINGS THIS MODULE DELIBERATELY DOES NOT DO. Each one is a ruled finding,
 # not an oversight; do not "fix" any of them.
@@ -46,10 +52,19 @@ CONTAINERS_PKGS=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin dock
 # Packages that own /usr/bin/docker, the compose CLI or the OCI runtime, and that
 # apt would therefore have to remove to satisfy docker-ce's own Conflicts and
 # containerd.io's Replaces. Listed to be REPORTED, never to be removed here.
+# The same list serves the RedHat family, where dnf faces the same choice —
+# containerd.io Obsoletes runc, docker-ce conflicts with podman-docker — plus
+# the names Fedora and older EL ship a docker under (moby-engine, docker,
+# docker-common); names a family does not have are simply never installed.
 CONTAINERS_CONFLICTS=(
   docker.io docker-compose docker-compose-v2 docker-doc docker-buildx
-  podman-docker containerd runc
+  podman-docker containerd runc moby-engine docker docker-common
 )
+
+# On suse and arch the distribution's docker DEPENDS on that family's containerd
+# and runc, and docker-buildx/docker-compose are what this module installs there.
+# Only podman's docker shim claims /usr/bin/docker against it.
+CONTAINERS_CONFLICTS_DISTRO=(podman-docker)
 
 # apt_run CMD [ARGS…]
 #   Runs ONE lib/pkg.sh helper with `pipefail` switched off, and restores it.
@@ -104,58 +119,17 @@ _containers_docker_desktop_note() {
   return 0
 }
 
-# _containers_docker_repo
-#   Configures https://download.docker.com/linux/<flavor>.
-#
-#   THIS DELIBERATELY DOES NOT CALL lib/repo.sh's repo_ensure_docker. That helper
-#   writes `Components: main`, and Docker's archive has no `main` component — its
-#   Release file publishes `stable edge test nightly` (verified live for both
-#   debian/bookworm and ubuntu/noble). apt then says
-#       Skipping acquire of configured file 'main/binary-amd64/Packages' as
-#       repository '.../linux/debian bookworm InRelease' doesn't have the
-#       component 'main'
-#   and every docker package is reported as having no installation candidate, on
-#   every distribution. Reproduced in debian:12.
-#   Switch this function back to repo_ensure_docker the moment lib/repo.sh says
-#   `stable`; everything else here is the same logic.
-#
-#   The suite steps DOWN the vendor's own published list and never up: a trixie
-#   box may fall back to bookworm, never forward to forky.
-#   Returns 0, 78 when Docker publishes nothing usable for this release, or 1.
-_containers_docker_repo() {
-  os_is_debian || os_is_ubuntu || {
-    log_skip "docker apt repo: unsupported distribution"
-    return 78
-  }
-  [ -n "${OS_UPSTREAM_CODENAME:-}" ] || {
-    log_skip "docker apt repo: no upstream codename for ${OS_CODENAME:-unknown}"
-    return 78
-  }
-  local uri="https://download.docker.com/linux/${OS_FLAVOR}" key suite i mine=-1
-  local ladder=() cands=()
-  if os_is_debian; then
-    ladder=(bullseye bookworm trixie forky)
-  else
-    ladder=(jammy noble oracular plucky questing resolute)
-  fi
-  for i in "${!ladder[@]}"; do
-    if [ "${ladder[i]}" = "$OS_UPSTREAM_CODENAME" ]; then mine=$i; fi
-  done
-  if [ "$mine" -lt 0 ]; then
-    mine=$((${#ladder[@]} - 1))
-    log_debug "docker: '$OS_UPSTREAM_CODENAME' is not in the known ladder — starting at '${ladder[mine]}'"
-  fi
-  for ((i = mine; i >= 0; i--)); do cands+=("${ladder[i]}"); done
-  suite=$(repo_suite_pick "$uri" "${cands[@]}") || suite=''
-  [ -n "$suite" ] || {
-    log_warn "docker publishes no suite for ${OS_FLAVOR} ${OS_UPSTREAM_CODENAME} — skipping the docker repository"
-    return 78
-  }
-  if [ "$suite" != "$OS_UPSTREAM_CODENAME" ]; then
-    log_warn "docker has no '$OS_UPSTREAM_CODENAME' suite — falling back to '$suite'"
-  fi
-  key=$(repo_key docker "$uri/gpg" asc --sha256 "${DOCKER_KEY_SHA256:-}") || return 1
-  repo_add docker "$uri" "$suite" stable "$key"
+# _containers_has PKG
+#   Returns 0 when a package of exactly this NAME is installed. pkg_installed
+#   answers by what is PROVIDED on the rpm families (EL's curl-minimal provides
+#   curl), and containerd.io itself provides containerd and runc — by that answer
+#   docker's own runtime would be reported as a conflict with itself on every run.
+#   apt and pacman keep pkg_installed. Read-only.
+_containers_has() {
+  case ${OS_PKG_MGR:-apt} in
+    dnf | zypper) installed_pkg_version "$1" >/dev/null ;;
+    *) pkg_installed "$1" ;;
+  esac
 }
 
 # _containers_check_conflicts
@@ -163,9 +137,15 @@ _containers_docker_repo() {
 #   Returns 0 when the install may proceed, 1 when the user has to decide first.
 #   Removes nothing under any circumstance (MUST-FIX S9).
 _containers_check_conflicts() {
-  local p present=()
-  for p in "${CONTAINERS_CONFLICTS[@]}"; do
-    if pkg_installed "$p"; then present+=("$p"); fi
+  local p present=() list=("${CONTAINERS_CONFLICTS[@]}")
+  case ${OS_FAMILY:-debian} in
+    suse | arch) list=("${CONTAINERS_CONFLICTS_DISTRO[@]}") ;;
+  esac
+  for p in "${list[@]}"; do
+    # `docker` is the distribution's engine on the families that install it and
+    # never a conflict there; on Debian it is the unrelated system-tray package.
+    case ${OS_FAMILY:-debian}:$p in debian:docker) continue ;; esac
+    if _containers_has "$p"; then present+=("$p"); fi
   done
   if [ ${#present[@]} -eq 0 ]; then
     return 0
@@ -179,16 +159,74 @@ _containers_check_conflicts() {
   fi
   log_warn "these installed packages overlap with docker-ce: ${present[*]}"
   log_warn "  docker-ce Conflicts docker.io, and containerd.io Replaces containerd"
-  log_warn "  and runc — so apt would REMOVE them to complete the install."
+  log_warn "  and runc — so ${OS_PKG_MGR:-apt} would REMOVE them to complete the install."
   log_warn "  This repository never removes a package you installed (MUST-FIX S9),"
   log_warn "  so the docker install stops here."
   log_warn "  Decide yourself, then re-run 'devenv --only containers':"
-  log_warn "    sudo apt-get remove ${present[*]}"
-  if ! confirm_dangerous "let apt replace ${present[*]} while installing docker-ce?" \
+  log_warn "    sudo $(pkg_hint remove "${present[@]}")"
+  if ! confirm_dangerous "let ${OS_PKG_MGR:-apt} replace ${present[*]} while installing docker-ce?" \
     DEVENV_ALLOW_PKG_REMOVE; then
     log_skip "docker-ce was not installed — the overlap above is unresolved"
     return 1
   fi
+  return 0
+}
+
+# _containers_kernel_extras
+#   EL10 moved the netfilter matches docker's firewall rules need — xt_addrtype,
+#   xt_conntrack, xt_MASQUERADE, nft_compat, br_netfilter — out of
+#   kernel-modules-core into kernel-modules-extra, which a cloud or minimal image
+#   does not install; EL9 and Fedora still ship them in core. Without them dockerd
+#   dies on its first iptables rule (AlmaLinux and Rocky 10 lab guests). One
+#   runtime probe instead of a release matrix: on the RedHat family, when the
+#   running kernel's module tree is there and has no xt_addrtype, install
+#   kernel-modules-extra for exactly that kernel (its `kernel-modules-extra-uname-r`
+#   capability). A kernel the repositories no longer carry is reported with the
+#   way out, a reboot into the current one. Returns 0.
+_containers_kernel_extras() {
+  [ "${OS_FAMILY:-}" = redhat ] || return 0
+  local kver
+  kver=$(uname -r)
+  [ -d "/lib/modules/$kver" ] || return 0
+  modinfo -k "$kver" xt_addrtype >/dev/null 2>&1 && return 0
+  log_info "kernel $kver has no xt_addrtype, which docker's firewall rules need — it is in kernel-modules-extra here"
+  pkg_install "kernel-modules-extra-uname-r = $kver" || true
+  is_dry_run && return 0
+  modinfo -k "$kver" xt_addrtype >/dev/null 2>&1 && return 0
+  _containers_fail "kernel $kver lacks xt_addrtype and no kernel-modules-extra for it is available — update the kernel, reboot into it, and re-run"
+  return 0
+}
+
+# _containers_kernel_tree
+#   Returns 1, with the reason recorded, when the running kernel has no module tree
+#   while another kernel's does: the kernel package was upgraded and the box was
+#   not rebooted (the Arch lab guest ran 7.2.8-arch1-1 with only arch1-2's modules
+#   on disk). dockerd then cannot load nf_tables and dies with "Could not fetch rule
+#   set generation id: Invalid argument", which names nothing. WSL runs Microsoft's
+#   kernel next to whatever /lib/modules holds, so it is never judged. Returns 0
+#   everywhere else.
+_containers_kernel_tree() {
+  local kver
+  os_is_wsl && return 0
+  kver=$(uname -r)
+  [ -d "/lib/modules/$kver" ] && return 0
+  compgen -G '/lib/modules/*' >/dev/null || return 0
+  _containers_fail "the running kernel $kver has no modules in /lib/modules — it was upgraded without a reboot, so dockerd cannot load its netfilter modules; reboot, then re-run"
+  return 1
+}
+
+# _containers_daemon_said
+#   After a failed start: the daemon's own last words, from this boot's journal.
+#   systemctl only says "the control process exited with error code"; the reason
+#   (a missing kernel module, a bad daemon.json, a firewall backend it cannot use)
+#   is in dockerd's log, and the user should not have to go and find it.
+#   A privileged read. Always returns 0.
+_containers_daemon_said() {
+  local said
+  said=$(as_root journalctl -b -u docker.service --no-pager -o cat -n 12 2>/dev/null) || said=''
+  [ -n "$said" ] || return 0
+  log_error "dockerd's last words (journalctl -u docker.service):"
+  printf '%s\n' "$said" | sed 's/^/    /' >&2
   return 0
 }
 
@@ -204,8 +242,11 @@ _containers_service() {
         log_skip "docker.service is already running"
         return 0
       fi
+      _containers_kernel_tree || return 0
+      _containers_kernel_extras
       if ! run_sudo systemctl enable --now docker.service; then
         _containers_fail "docker.service could not be started (systemctl status docker)"
+        _containers_daemon_said
         return 0
       fi
       changed "docker.service enabled and started"
@@ -340,13 +381,21 @@ module_main() {
   _containers_docker_desktop_note
 
   # 1. The vendor repository. 78 means this release has no docker suite at all,
-  #    which is a precondition failure for the whole module, not a warning.
-  _containers_docker_repo || rc=$?
+  #    which is a precondition failure for the whole module, not a warning —
+  #    except on suse and arch, where Docker publishes nothing by design and the
+  #    distribution's own docker is the plan (D6).
+  repo_ensure_docker || rc=$?
   case $rc in
     0) ;;
-    78) skip "docker publishes no apt suite for ${OS_PRETTY:-this release}" ;;
+    78)
+      case ${OS_FAMILY:-debian} in
+        suse | arch) log_info "installing the ${OS_DISTRO:-distribution}'s own docker, docker-buildx and docker-compose" ;;
+        debian | '') skip "docker publishes no apt suite for ${OS_PRETTY:-this release}" ;;
+        *) skip "docker publishes no ${OS_PKG_MGR:-package} repository for ${OS_PRETTY:-this release}" ;;
+      esac
+      ;;
     *)
-      _containers_fail "the docker apt repository could not be configured"
+      _containers_fail "the docker ${OS_PKG_MGR:-apt} repository could not be configured"
       trap - ERR
       exit 1
       ;;
@@ -359,13 +408,22 @@ module_main() {
 
   # 3. Install. pkg_install is the idempotency short-circuit: on a second run
   #    every name is already installed and apt is never invoked.
-  # _containers_docker_repo set NEED_APT_UPDATE=1 if it wrote the sources file,
-  # and
+  # repo_ensure_docker set NEED_APT_UPDATE=1 if it wrote the sources file, and
   # pkg_install checks candidates BEFORE refreshing the index — so refresh here or
   # the first run drops all five names as "no installation candidate".
   pkg_update
   if ! apt_run pkg_install "${CONTAINERS_PKGS[@]}"; then
     _containers_fail "the docker packages could not be installed"
+    trap - ERR
+    exit 1
+  fi
+  # pkg_install calls a name with no candidate a skip, which is right for an
+  # optional package and wrong here: the repository was just configured, so a
+  # docker that is still missing means its packages were invisible. On Fedora
+  # that was dnf5 dropping the signed docker repo from a non-root query; the
+  # containers in CI passed anyway, because they never start the daemon.
+  if ! is_dry_run && ! have docker; then
+    _containers_fail "there is no docker command after the install — every docker package was skipped (see the warnings above)"
     trap - ERR
     exit 1
   fi

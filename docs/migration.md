@@ -115,8 +115,8 @@ Nothing else on this page applies to you. The rest is about the `wsl2-config` sc
 ## 2. From `wsl2-config`: the short version
 
 Everything from here down is about the predecessor scripts: an `install.sh` that curl-piped six
-sub-scripts into `bash`, for one WSL2 box. What replaced them is a general Debian/Ubuntu
-provisioning tool with one CLI, gated modules, profiles, a dry run that is a real no-op, and an
+sub-scripts into `bash`, for one WSL2 box. What replaced them is a general Linux (Debian,
+RedHat, SUSE and Arch family) provisioning tool with one CLI, gated modules, profiles, a dry run that is a real no-op, and an
 uninstall path.
 
 ```bash

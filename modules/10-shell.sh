@@ -372,31 +372,61 @@ install_extras() {
   have_root && pkg_install_optional duf
 
   # yazi is in no distro archive. Its .deb assets are named by rust triple.
-  if ! have yazi; then
-    deb_release_install sxyazi/yazi \
-      'yazi-{arch_rust}-unknown-linux-gnu.deb' yazi "${YAZI_VERSION:?}" --bin yazi \
+  # It publishes no .rpm. Off apt the archive is the MUSL zip, not the gnu one:
+  # the gnu build needs glibc 2.39 (GLIBC_ABI_DT_RELR) and does not start on
+  # EL 9, while the musl build is static and runs on every family. The zip also
+  # carries `ya`, yazi's plugin manager, which the .deb installs beside it; on the
+  # archive path it is installed from the same cached zip.
+  # On apt the .deb is the gnu build too, so a Debian-family box below glibc
+  # 2.39 (Debian 12, Ubuntu 22.04) never got a yazi that starts. It takes the
+  # static musl zip, exactly as the other families do.
+  local yazi_musl=0
+  if [ "${OS_PKG_MGR:-apt}" != apt ] || ! version_ge "${OS_LIBC:-0}" 2.39; then yazi_musl=1; fi
+  if ! have yazi && [ "${OS_PKG_MGR:-apt}" = apt ] && [ "$yazi_musl" = 1 ]; then
+    gh_release_install sxyazi/yazi 'yazi-{arch_rust}-unknown-linux-musl.zip' yazi "${YAZI_VERSION:?}" \
       --no-verify \
       --no-verify-reason 'sxyazi/yazi publishes no checksum asset (verified for v26.9.1)' \
       || rc=$?
     [ "$rc" != 0 ] && log_skip "yazi ${YAZI_VERSION:-} is not available for ${OS_ARCH_RUST:-?}"
   fi
+  if ! have yazi; then
+    rc=0
+    pkg_release_install sxyazi/yazi yazi "${YAZI_VERSION:?}" \
+      --deb 'yazi-{arch_rust}-unknown-linux-gnu.deb' \
+      --tarball 'yazi-{arch_rust}-unknown-linux-musl.zip' --bin yazi \
+      --no-verify \
+      --no-verify-reason 'sxyazi/yazi publishes no checksum asset (verified for v26.9.1)' \
+      || rc=$?
+    [ "$rc" != 0 ] && log_skip "yazi ${YAZI_VERSION:-} is not available for ${OS_ARCH_RUST:-?}"
+  fi
+  if [ "$yazi_musl" = 1 ] && have yazi && ! have ya; then
+    rc=0
+    gh_release_install sxyazi/yazi 'yazi-{arch_rust}-unknown-linux-musl.zip' ya "${YAZI_VERSION:?}" \
+      --no-verify \
+      --no-verify-reason 'sxyazi/yazi publishes no checksum asset (verified for v26.9.1)' \
+      || rc=$?
+    [ "$rc" != 0 ] && log_skip "ya (yazi's plugin manager) is not available for ${OS_ARCH_RUST:-?}"
+  fi
 
   # fastfetch is absent from bookworm and noble; its assets use uname-ish arch
   # names that match neither the dpkg nor the go token, so they are spelled out.
+  # The .rpm and the archive carry the same names; the archive is a usr/ tree in
+  # which a COMPLETION file is also called `fastfetch`, hence --archive-path.
   if ! have fastfetch; then
     local ff=''
     case ${OS_ARCH_DPKG:-} in
-      amd64) ff=fastfetch-linux-amd64.deb ;;
-      arm64) ff=fastfetch-linux-aarch64.deb ;;
-      armhf) ff=fastfetch-linux-armv7l.deb ;;
+      amd64) ff=fastfetch-linux-amd64 ;;
+      arm64) ff=fastfetch-linux-aarch64 ;;
+      armhf) ff=fastfetch-linux-armv7l ;;
     esac
     if have_root && pkg_install_first fastfetch; then
       :
     elif [ -n "$ff" ]; then
       rc=0
-      deb_release_install fastfetch-cli/fastfetch "$ff" fastfetch "${FASTFETCH_VERSION:?}" \
+      pkg_release_install fastfetch-cli/fastfetch fastfetch "${FASTFETCH_VERSION:?}" \
+        --deb "$ff.deb" --rpm "$ff.rpm" --tarball "$ff.tar.gz" --archive-path usr/bin/fastfetch \
         --no-verify \
-        --no-verify-reason 'fastfetch-cli/fastfetch publishes no checksum asset (verified for 2.68.1)' \
+        --no-verify-reason 'fastfetch-cli/fastfetch publishes no checksum asset (verified for 2.69.0)' \
         || rc=$?
       [ "$rc" != 0 ] && log_skip "fastfetch ${FASTFETCH_VERSION:-} is not available here"
     else

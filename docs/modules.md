@@ -13,50 +13,52 @@ devenv list | column -t -s "$(printf '\t')"
 
 ## The table
 
-Verified 2026-09-11 against `devenv list`.
+Verified 2026-10-06 against the module headers (`make lint-docs`). `family` is `—` for a
+module that applies to every family.
 
-| # | module | profiles | os | arch | needs | root | what it does |
-|---|---|---|---|---|---|---|---|
-| 00 | `preflight` | min, dev, full, ci | any | any | — | no | check the distribution is supported, create `$DEVENV_CONFIG`/`$DEVENV_CACHE`/`$DEVENV_STATE`, migrate legacy apt sources, install the bootstrap package set — asking for root only if something is actually missing |
-| 05 | `base-packages` | min, dev, full, ci | any | any | — | **yes** | the one apt base list: build tools, network tools, `jq`, `ripgrep`, `fd`, `bat`, `tldr`, `bash-completion` |
-| 10 | `shell` | min, dev, full, ci | any | any | — | no | the `~/.bashrc` managed block, the `~/.bashrc.d/` fragments, prompt, lazy completion cache, `fzf`/`zoxide`/`eza`/`yazi`/`starship`, and the `shell` entries of the [external config repo list](configuration.md#external-config-repos) (`mybash`, on by default) |
-| 15 | `git` | min, dev, full, ci | any | amd64, arm64 | `git` | no | `~/.config/git/ignore`, `gh`, `git-delta`. Git config is **a plan by default** — see below |
-| 20 | `lang-go` | min, dev, full, ci | any | any | — | **yes** | the Go toolchain to `/usr/local/go` plus the pinned `go install` tools |
-| 21 | `lang-rust` | dev, full | any | any | — | no | `rustup`. Rust is kept as a language, not as a package manager |
-| 22 | `lang-node` | dev, full | any | any | — | no | `nvm` at `~/.config/nvm`, lazily loaded so it costs nothing per shell. `mise` with `DEVENV_NODE_MANAGER=mise` |
-| 23 | `lang-python` | min, dev, full, ci | any | any | — | no | `uv`, and every Python CLI as a `uv tool` — never `pip --user`, never touching PEP 668 |
-| 28 | `repo-dev` | full | any | any | — | no | `shellcheck`, `shfmt`, `pre-commit` — what CI for *this* repository needs |
-| 30 | `containers` | dev, full | **!container** | amd64, arm64 | — | **yes** | `docker-ce` from Docker's own repository, service start, and the docker-group question |
-| 35 | `kubernetes` | dev, full, ci | any | amd64, arm64 | — | **yes** | `kubectl`, `helm`, `k9s`, `k3d`, `kind`, `argocd`, `cilium`, `hubble`, `virtctl`, `kustomize`, `kubeconform`, `velero`, `crictl`, `trivy`, `yq` |
-| 36 | `k8s-plugins` | dev, full, ci | any | amd64, arm64 | `kubectl` | no | `krew` plus the kubectl plugin roster, the Helm plugins (`diff`, `schema`, `unittest`, …) and the 34 default Helm chart repositories |
-| 37 | `k9s-config` | dev, full, ci | any | amd64, arm64 | — | no | k9s plugins, hotkeys, aliases and skins, plus a skin that follows the current context |
-| 38 | `auth-sso` | dev, full | any | amd64, arm64 | — | no | the `open-url` browser shim, `clip`/`clip-paste`, `sso-login`, `sso-kubeconfig-add`, `web`, and the config templates. **No browser, no new binaries** |
-| 40 | `iac` | dev, full, ci | any | amd64, arm64 | — | **yes** | `terraform`, `tflint`, `terraform-docs`, OpenBao's `bao`, and the Ansible/security Python CLIs |
-| 45 | `cloud` | dev, full, ci | any | amd64, arm64 | — | **yes** | `gh`, `glab`, `azure-cli`, `hcloud`, `crane`, Azure's `kubelogin` |
-| 50 | `editors` | dev, full | any | any | — | no | Neovim from upstream, the tree-sitter CLI nvim-config compiles its parsers with (the release binary, or a cargo build of the same pin where this glibc is too old for it), `tmux`, `~/.tmux-sessions/tmux-save-session.sh`, and the `editors` entries of the [external config repo list](configuration.md#external-config-repos) — cloned and symlinked, never curl-piped |
-| 52 | `root-configs` | dev, full | any | any | `git` | yes | The same nvim, tmux and bash configuration for **root**, so `sudo -i` is not a bare shell: every enabled entry of the [external config repo list](configuration.md#external-config-repos) cloned under `/root` and linked from root's dotfiles. `DEVENV_ROOT_CONFIGS=0` skips it |
-| 55 | `media` | full | any | any | — | **yes** | `ffmpeg`, ImageMagick, `poppler-utils`, 7-Zip — Yazi's preview stack, each independently useful on a server |
-| 58 | `headless-browser` | **none** | !container | amd64, arm64 | `npx` | **yes** | Playwright's system dependency set, delegated to `npx playwright install-deps`. No browser UI |
-| 65 | `ai` | dev, full, ai | any | any | — | no | **Claude Code** and **opencode** via their vendor installers (install-if-absent, never managed afterwards); `crush` when `INSTALL_AI_AGENTS=1` |
-| 70 | `wsl` | min, dev, full | **wsl** | any | — | no | a no-op unless this really is WSL: `wslu`, the systemd question, the restart hint |
-| 80 | `private` | private | any | any | — | no | internal tooling from a private git forge. Every host comes from the environment; nothing internal is committed here |
-| 85 | `personal` | personal | any | any | — | no | the owner's own side-project CLIs, entirely env-driven |
-| 90 | `doctor` | dev, full | any | any | — | no | read-only audit of shell, PATH, `/usr/local` ownership, apt sources, kubernetes, SSO and WSL; `--fix` prints the repair plan and changes nothing |
-| 91 | `purge-desktop` | **none** | any | any | — | **yes** | report, and optionally remove, the compositor/browser/VNC residue an older provisioning left |
-| 92 | `migrate` | **none** | any | any | — | no | report what `wsl2-config` left behind. Changes nothing unless asked |
-| 95 | `brew` | full | any | any | — | no | audit-only: lists your Homebrew leaves and maps each to its apt/release equivalent |
-| 99 | `summary` | min, dev, full, ci | any | any | — | no | what changed, what was skipped and why, and the exact next steps |
+| # | module | profiles | family | os | arch | needs | root | what it does |
+|---|---|---|---|---|---|---|---|---|
+| 00 | `preflight` | min, dev, full, ci | — | any | any | — | no | check the distribution is supported, create `$DEVENV_CONFIG`/`$DEVENV_CACHE`/`$DEVENV_STATE`, migrate legacy apt sources, enable the family's add-on repository (Ubuntu `universe`; CRB + EPEL on AlmaLinux/Rocky), install the bootstrap package set — asking for root only if something is actually missing |
+| 05 | `base-packages` | min, dev, full, ci | — | any | any | — | **yes** | the one base package list (Debian names, translated per family): build tools, network tools, `jq`, `ripgrep`, `fd`, `bat`, `tldr`, `bash-completion` |
+| 10 | `shell` | min, dev, full, ci | — | any | any | — | no | the `~/.bashrc` managed block, the `~/.bashrc.d/` fragments, prompt, lazy completion cache, `fzf`/`zoxide`/`eza`/`yazi`/`starship`, and the `shell` entries of the [external config repo list](configuration.md#external-config-repos) (`mybash`, on by default) |
+| 15 | `git` | min, dev, full, ci | — | any | amd64, arm64 | `git` | no | `~/.config/git/ignore`, `gh`, `git-delta`. Git config is **a plan by default** — see below |
+| 20 | `lang-go` | min, dev, full, ci | — | any | any | — | **yes** | the Go toolchain to `/usr/local/go` plus the pinned `go install` tools |
+| 21 | `lang-rust` | dev, full | — | any | any | — | no | `rustup`. Rust is kept as a language, not as a package manager |
+| 22 | `lang-node` | dev, full | — | any | any | — | no | `nvm` at `~/.config/nvm`, lazily loaded so it costs nothing per shell. `mise` with `DEVENV_NODE_MANAGER=mise` |
+| 23 | `lang-python` | min, dev, full, ci | — | any | any | — | no | `uv`, and every Python CLI as a `uv tool` — never `pip --user`, never touching PEP 668 |
+| 28 | `repo-dev` | full | — | any | any | — | no | `shellcheck`, `shfmt`, `pre-commit` — what CI for *this* repository needs |
+| 30 | `containers` | dev, full | — | **!container** | amd64, arm64 | — | **yes** | Docker from its own repository (Debian, RedHat) or the distribution's `docker` (SUSE, Arch), service start, and the docker-group question |
+| 35 | `kubernetes` | dev, full, ci | — | any | amd64, arm64 | — | **yes** | `kubectl`, `helm`, `k9s`, `k3d`, `kind`, `argocd`, `cilium`, `hubble`, `virtctl`, `kustomize`, `kubeconform`, `velero`, `crictl`, `trivy`, `yq` |
+| 36 | `k8s-plugins` | dev, full, ci | — | any | amd64, arm64 | `kubectl` | no | `krew` plus the kubectl plugin roster, the Helm plugins (`diff`, `schema`, `unittest`, …) and the 34 default Helm chart repositories |
+| 37 | `k9s-config` | dev, full, ci | — | any | amd64, arm64 | — | no | k9s plugins, hotkeys, aliases and skins, plus a skin that follows the current context |
+| 38 | `auth-sso` | dev, full | — | any | amd64, arm64 | — | no | the `open-url` browser shim, `clip`/`clip-paste`, `sso-login`, `sso-kubeconfig-add`, `web`, and the config templates. **No browser, no new binaries** |
+| 40 | `iac` | dev, full, ci | — | any | amd64, arm64 | — | **yes** | `terraform`, `tflint`, `terraform-docs`, OpenBao's `bao`, and the Ansible/security Python CLIs |
+| 45 | `cloud` | dev, full, ci | — | any | amd64, arm64 | — | **yes** | `gh`, `glab`, `azure-cli`, `hcloud`, `crane`, Azure's `kubelogin` |
+| 50 | `editors` | dev, full | — | any | any | — | no | Neovim from upstream, the tree-sitter CLI nvim-config compiles its parsers with (the release binary, or a cargo build of the same pin where this glibc is too old for it), `tmux`, `~/.tmux-sessions/tmux-save-session.sh`, and the `editors` entries of the [external config repo list](configuration.md#external-config-repos) — cloned and symlinked, never curl-piped |
+| 52 | `root-configs` | dev, full | — | any | any | `git` | yes | The same nvim, tmux and bash configuration for **root**, so `sudo -i` is not a bare shell: every enabled entry of the [external config repo list](configuration.md#external-config-repos) cloned under `/root` and linked from root's dotfiles. `DEVENV_ROOT_CONFIGS=0` skips it |
+| 55 | `media` | full | — | any | any | — | **yes** | `ffmpeg`, ImageMagick, `poppler-utils`, 7-Zip — Yazi's preview stack, each independently useful on a server |
+| 58 | `headless-browser` | **none** | — | !container | amd64, arm64 | `npx` | **yes** | Playwright's system dependency set, delegated to `npx playwright install-deps`. No browser UI |
+| 65 | `ai` | dev, full, ai | — | any | any | — | no | **Claude Code** and **opencode** via their vendor installers (install-if-absent, never managed afterwards); `crush` when `INSTALL_AI_AGENTS=1` |
+| 70 | `wsl` | min, dev, full | — | **wsl** | any | — | no | a no-op unless this really is WSL: `wslu`, the systemd question, the restart hint |
+| 80 | `private` | private | — | any | any | — | no | internal tooling from a private git forge. Every host comes from the environment; nothing internal is committed here |
+| 85 | `personal` | personal | — | any | any | — | no | the owner's own side-project CLIs, entirely env-driven |
+| 90 | `doctor` | dev, full | — | any | any | — | no | read-only audit of shell, PATH, `/usr/local` ownership, package sources, kubernetes, SSO and WSL; `--fix` prints the repair plan and changes nothing |
+| 91 | `purge-desktop` | **none** | debian | any | any | — | **yes** | report, and optionally remove, the compositor/browser/VNC residue an older provisioning left |
+| 92 | `migrate` | **none** | debian | any | any | — | no | report what `wsl2-config` left behind. Changes nothing unless asked |
+| 95 | `brew` | full | — | any | any | — | no | audit-only: lists your Homebrew leaves and maps each to its apt/release equivalent |
+| 99 | `summary` | min, dev, full, ci | — | any | any | — | no | what changed, what was skipped and why, and the exact next steps |
 
 `min` = `minimal`, `dev` = `devops` (the default). Which tool comes from where, and what was
 deliberately left out, is [docs/tools.md](tools.md).
 
 ## Gates
 
-`os` → `arch` → `needs` → `root` are applied before a module starts. A gate that does not hold
-is a **skip**, never a failure: nothing runs, the run continues, and the summary says why.
+`family` → `os` → `arch` → `needs` → `root` are applied before a module starts. A gate that does
+not hold is a **skip**, never a failure: nothing runs, the run continues, and the summary says why.
 
 | gate value | meaning |
 |---|---|
+| `family=debian` | runs only on that family (a comma list: `debian`, `redhat`, `suse`, `arch`); anywhere else the module is **not applicable** and says so. No `family=` means every family |
 | `os=any` | runs everywhere |
 | `os=!container` | skipped inside a container — there is no daemon or no udev to talk to |
 | `os=wsl` | skipped unless `/run/WSL` or `/usr/lib/wsl` exists. **Never** `$WSL_DISTRO_NAME` |

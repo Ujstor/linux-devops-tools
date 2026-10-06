@@ -27,7 +27,9 @@
 #     page, and an apt source pointing at it breaks `apt update` for everything.
 #     `wslu` is taken from the distro archive when the distro has it (jammy and
 #     noble universe do; Debian does not) and skipped with one line when it does
-#     not.
+#     not. Off the Debian family it is skipped outright, with the reason: there it
+#     lives in copr, the AUR or a side repository, and this module adds none
+#     (FR-014). Everything else in this module is family-agnostic.
 #
 #   * It never installs a clipboard bridge. `clip` / `clip-paste` are shipped by
 #     10-shell as real executables that resolve the automount prefix at RUNTIME,
@@ -95,10 +97,16 @@ ensure_sysv_boot_command() {
 #   hands the URL to the Windows default browser instead of falling through
 #   /etc/alternatives/www-browser, which on this box is lynx and seizes the TTY
 #   (VERIFIED-FACTS §3). config/bin/open-url prefers it when it exists.
-#   Archive-only, on purpose — see the header.
+#   Archive-only, on purpose — see the header. Debian family only.
 ensure_wslu() {
   if have wslview; then
     log_skip "wslu is already installed ($(command -v wslview))"
+    return 0
+  fi
+  if ! os_family_is debian; then
+    log_skip "wslu: not applicable on the ${OS_FAMILY:-unknown} family (taken from the Debian family's archive only)"
+    log_info "  open-url will use the Windows default browser through an absolute"
+    log_info "  \$(wsl_win_root)/Windows/System32 path, or print the URL to paste."
     return 0
   fi
   if ! have_root; then

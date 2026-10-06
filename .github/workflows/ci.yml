@@ -3,10 +3,11 @@ name: ci
 # What CI is for here, in order of how often it saves someone:
 #
 #   privacy    this repository is public; nothing from a real estate may land in it
-#   container  the installer runs twice on every supported distribution and the
+#   container  the installer runs twice on every supported release and the
 #              second run must change nothing
-#   policy     the rules shellcheck cannot express (one mutation gate, one apt
-#              policy, no pin outside versions.env)
+#   policy     the rules shellcheck cannot express (one mutation gate, one package
+#              policy, no pin outside versions.env), and the supported releases
+#              declared once — config/os-support.list against both CI matrices
 #   lint       shellcheck and shfmt, plus the file list they are handed
 #   yaml       every shipped YAML file parses
 #   docs       docs/modules.md still matches the module meta headers
@@ -17,8 +18,8 @@ name: ci
 # check only CI can run is a check nobody runs before pushing, which is how nine
 # violations got past a local suite that reported clean. The `container` matrix is
 # the one exception — it calls `docker run` per image for log separation, with
-# exactly the environment tests/docker/matrix.sh passes, so `make test-docker`
-# reproduces it image for image.
+# exactly the environment tests/docker/matrix.sh passes, so
+# `PROFILE=devops IMAGES=<image> make test-docker` reproduces it image for image.
 #
 # Every job below reports through `ci-ok`, and every step that runs a `make`
 # target ASSERTS THE TARGET'S OWN VERDICT LINE rather than trusting exit 0. The
@@ -91,10 +92,17 @@ jobs:
       # `make lint-policy` prints "skip: ..." and exits 0 when rules.sh is not in
       # the checkout, so a deleted or renamed gate reads exactly like a clean
       # tree. Assert the target reached its own verdict instead of trusting 0.
+      #
+      # lint-policy runs lint-os-support first: the drift gate between
+      # config/os-support.list and the container matrices, its self-test
+      # included, because the GitLab component drives a fixed set of targets
+      # and lint-policy is the one of them this check belongs to.
       - name: make lint-policy
         run: |
           set -euo pipefail
           make lint-policy | tee /tmp/policy.log
+          grep -qx 'os-support.sh: self-test passed' /tmp/policy.log
+          grep -qE '^os-support\.sh: clean \([1-9][0-9]* release\(s\); ' /tmp/policy.log
           grep -qx 'rules.sh: clean' /tmp/policy.log
 
   privacy:
@@ -189,10 +197,13 @@ jobs:
       # docs/modules.md is written by hand, so it rots. `make test` has always
       # run this check and CI never did: the one gate that catches a stale table
       # was the one gate nobody ran.
+      # lint-docs proves itself first: a planted family/os/profile drift and a
+      # table with a column missing must each be reported.
       - name: make lint-docs
         run: |
           set -euo pipefail
           make lint-docs | tee /tmp/docs.log
+          grep -qx 'docs-drift.sh: self-test passed' /tmp/docs.log
           grep -qE '^docs-drift\.sh: clean \([1-9][0-9]* module\(s\), [1-9][0-9]* table row\(s\)\)$' /tmp/docs.log
 
   unit:
@@ -237,34 +248,47 @@ jobs:
           make test-bootstrap | tee /tmp/bootstrap.log
           grep -qE '^bootstrap\.sh: [1-9][0-9]* passed, 0 failed$' /tmp/bootstrap.log
 
+  # Every supported release, every one a gate: no continue-on-error, no soft
+  # leg (spec 002 SC-007). The image list is a COPY of config/os-support.list's
+  # image column — a matrix is resolved before the checkout exists, so it cannot
+  # read the file — and `make lint-os-support` fails when the two disagree.
+  # Change the list and this together. The images are fully qualified, so the
+  # string here is exactly the one the GitLab matrix pulls.
   container:
     name: ${{ matrix.image }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    continue-on-error: ${{ matrix.soft || false }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - image: debian:12
-          - image: debian:13
-          - image: ubuntu:22.04
-          - image: ubuntu:24.04
-          # Not a supported target yet: it runs, and it is allowed to fail.
-          - image: ubuntu:26.04
-            soft: true
+        image:
+          - docker.io/library/debian:12
+          - docker.io/library/debian:13
+          - docker.io/library/ubuntu:22.04
+          - docker.io/library/ubuntu:24.04
+          - docker.io/library/ubuntu:26.04
+          - docker.io/library/almalinux:9
+          - docker.io/library/almalinux:10
+          - docker.io/rockylinux/rockylinux:9
+          - docker.io/rockylinux/rockylinux:10
+          - docker.io/library/fedora:43
+          - docker.io/library/fedora:44
+          - docker.io/opensuse/leap:16.0
+          - docker.io/library/archlinux:latest
     steps:
       - uses: actions/checkout@v4
 
       # tests/docker/entry.sh fingerprints the filesystem BEFORE the dry run,
       # again after it, then installs twice and diffs. See its header for the
-      # order — it is the whole point of the test.
+      # order — it is the whole point of the test. PROFILE=devops is the default
+      # set, as in the GitLab matrix (spec 002 FR-016). No --upgrade on Arch:
+      # entry.sh levels the image with its sync database in setup (FR-012).
       - name: Install twice on ${{ matrix.image }}
         run: |
           docker run --rm \
             -v "$PWD:/src:ro" \
             -e SRC=/src \
-            -e PROFILE=minimal \
+            -e PROFILE=devops \
             -e DRY_PROFILE=ci \
             "${{ matrix.image }}" \
             bash /src/tests/docker/entry.sh
@@ -279,9 +303,10 @@ jobs:
   #      version accepted `skipped` as a pass, which is the same shape as a rule
   #      that scans no files: green because nothing happened.
   #
-  # `container` legs marked `soft: true` carry job-level continue-on-error, so a
-  # failure there is reported to `needs` as success. That is the one intended
-  # exemption and it lives at the matrix entry, where it is visible.
+  # There is no exemption. A job with continue-on-error reports a failure to
+  # `needs` as success, which is exactly an allowed-to-fail release; the
+  # `container` matrix had one such leg, and tests/policy/os-support.sh now
+  # fails the build if any continue-on-error comes back into this file.
   ci-ok:
     name: ci
     runs-on: ubuntu-latest

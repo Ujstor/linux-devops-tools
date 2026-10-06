@@ -120,10 +120,19 @@ install_go_toolchain() {
     log_skip "installing Go into $GOROOT_DIR needs root"
     return 0
   fi
-  if ! http_ok "$url"; then
-    log_warn "go $want has no linux-${OS_ARCH_GO} build at $url"
-    return 78
-  fi
+  local hrc=0
+  http_ok "$url" || hrc=$?
+  case $hrc in
+    0) ;;
+    1)
+      log_warn "go $want has no linux-${OS_ARCH_GO} build at $url"
+      return 78
+      ;;
+    *)
+      log_error "go: could not reach $url (network or server error)"
+      return 1
+      ;;
+  esac
 
   work=$(devenv_tmpdir) || return 1
   local dl="${DEVENV_CACHE:?}/dl" ar
@@ -158,6 +167,9 @@ install_go_toolchain() {
   fi
   run_sudo mv -- "$GOROOT_DIR.new" "$GOROOT_DIR" || return 1
   run_sudo rm -rf -- "$GOROOT_DIR.old" || true
+  # Unpacked under the .new name, every file took /usr/local's usr_t; the
+  # policy's label for $GOROOT_DIR/bin is bin_t. A no-op without SELinux.
+  fs_selinux_relabel -R "$GOROOT_DIR"
 
   log_success "installed go $want -> $GOROOT_DIR"
   changed "go $want"

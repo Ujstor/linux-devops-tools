@@ -29,7 +29,7 @@
 #
 # What it deliberately does NOT do:
 #   * `sudo -v` up front "to get it out of the way"          (S14)
-#   * install anything beyond the five bootstrap packages    (05-base-packages)
+#   * install anything beyond the seven bootstrap packages   (05-base-packages)
 #   * touch /etc/wsl.conf                                    (70-wsl, opt-in)
 #   * remove or rewrite an apt source it did not recognise   (S9)
 set -euo pipefail
@@ -37,28 +37,41 @@ source "${DEVENV_HOME:?}/lib/common.sh"
 
 # The set every other module assumes exists. Deliberately tiny: `install.sh`
 # already needed curl or git to get here, so this is about the remainder.
+# These are the DEBIAN names on every family: pkg_install translates them through
+# config/packages.map (xz-utils is `xz` everywhere else), so the list exists once.
 #   ca-certificates  every https:// fetch in lib/net.sh and lib/repo.sh
 #   curl             lib/net.sh's only transport
 #   git              devenv_sync_repo, `devenv update`, krew
 #   tar              every release tarball
 #   xz-utils         several vendors ship .tar.xz (neovim, shellcheck)
-BOOTSTRAP_PKGS=(ca-certificates curl git tar xz-utils)
+#   diffutils        `cmp`, which every writer in lib/fs.sh compares with before it
+#                    writes — without it nothing is ever "unchanged", and a second
+#                    run rewrites every file. Essential on Debian; absent from the
+#                    AlmaLinux, Rocky, Fedora, Leap and Arch images.
+#   findutils        `find`, used across lib/ and the modules. Essential on Debian;
+#                    absent from the Leap image.
+# On Debian and Ubuntu the last two are always present, so nothing changes there.
+BOOTSTRAP_PKGS=(ca-certificates curl git tar xz-utils diffutils findutils)
 
 # missing_bootstrap
 #   Prints the bootstrap packages that are neither installed nor already on PATH,
 #   one per line. Prints nothing when the box is complete. Always returns 0.
-#   The PATH check matters: a package may be absent from dpkg's database and the
-#   command still be present (a container image built with a different base, a
+#   The PATH check matters: a package may be absent from the package database and
+#   the command still be present (a container image built with a different base, a
 #   binary in /usr/local). Installing over that would be noise, not a fix.
+#   ca-certificates is judged by the bundle it produces, which is where each
+#   family keeps it (FAM_CA_BUNDLE) — not by a Debian path.
 missing_bootstrap() {
   local p cmd
   for p in "${BOOTSTRAP_PKGS[@]}"; do
     case $p in
       ca-certificates)
-        [ -e /etc/ssl/certs/ca-certificates.crt ] && continue
+        [ -e "${FAM_CA_BUNDLE:-}" ] && continue
         cmd=''
         ;;
       xz-utils) cmd=xz ;;
+      diffutils) cmd='cmp' ;;
+      findutils) cmd='find' ;;
       *) cmd=$p ;;
     esac
     if [ -n "$cmd" ] && have "$cmd"; then continue; fi
@@ -88,10 +101,20 @@ ensure_bootstrap() {
     log_error "Modules that need no root (shell, git config, k9s-config) will still run."
     skip "the bootstrap packages ${missing[*]} are missing and root is not available"
   fi
-  pkg_install "${missing[@]}" || {
-    log_error "could not install ${missing[*]} — later modules will fail on their own"
-    return 1
-  }
+  local rc=0
+  pkg_install "${missing[@]}" || rc=$?
+  case $rc in
+    0) ;;
+    78)
+      # The package layer declined, with its reason already logged — on a rolling
+      # release, an index that needs the full upgrade only --upgrade allows (FR-012).
+      skip "the bootstrap packages ${missing[*]} were not installed (the reason is above)"
+      ;;
+    *)
+      log_error "could not install ${missing[*]} — later modules will fail on their own"
+      return 1
+      ;;
+  esac
   changed "bootstrap packages: ${missing[*]}"
   return 0
 }
@@ -119,7 +142,9 @@ report_container() {
 }
 
 module_main() {
-  os_require_supported || die "linux-devops-tools targets Debian and Ubuntu; this box is ${OS_PRETTY:-unknown}"
+  # Refuses an unknown family before ANYTHING below runs (FR-004), and says once
+  # when a known family's release is untested (FR-003).
+  os_require_supported || die "linux-devops-tools does not support this distribution: ${OS_PRETTY:-unknown}"
 
   # bin/devenv prints this once for the whole run. Standalone
   # (`DEVENV_HOME=$PWD ./modules/00-preflight.sh`) nobody has, so print it here.
@@ -129,14 +154,19 @@ module_main() {
   ensure_xdg_dirs
   ensure_bootstrap
 
-  # Ubuntu only, and only when `universe` is genuinely not enabled: bat, fd-find,
-  # ripgrep and wslu all live there. A no-op on Debian.
-  pkg_ensure_universe
+  # The family's standard add-on repository, only when it is genuinely not
+  # enabled: Ubuntu's `universe` (bat, fd-find, ripgrep and wslu live there),
+  # EPEL + CRB on AlmaLinux and Rocky. A no-op on Debian, Fedora, Leap and Arch.
+  # Enabling one is reported as a change (FR-010).
+  pkg_ensure_addon
 
   # Removes the stale .list/keyring pairs the OLD repo left behind so that
   # `apt update` stops warning about duplicate sources. Reports every removal,
-  # honours --dry-run, and never touches a source it does not recognise.
-  repo_migrate_legacy
+  # honours --dry-run, and never touches a source it does not recognise. The old
+  # repo only ever ran on the Debian family.
+  if os_family_is debian; then
+    repo_migrate_legacy
+  fi
 
   return 0
 }
