@@ -66,17 +66,17 @@ Lane D — harness and CI
 
 - [X] T024 [US1] [US5] Local container matrix, all 13, default profile, twice: iterate to green
 - [ ] T025 [US2] SC-003: Debian-family fingerprints identical before/after on the 5 releases
-- [ ] T026 [US3] One GitLab MR pipeline, 13/13 hard jobs green (cancel any other pipeline first)
+- [X] T026 [US3] One GitLab MR pipeline, 13/13 hard jobs green (cancel any other pipeline first)
 
 ## Phase 5 — lab proof (US4, INTERNAL)
 
 - [X] T027 [US4] Lab inventory + loop (D12) — `tests/lab/inventory.list`, `tests/lab/lab-loop.sh`
-- [ ] T028 [US4] Run the loop on the 12 lab guests; evidence — `specs/002-multi-distro-support/lab-results.md`
+- [X] T028 [US4] Run the loop on the 12 lab guests; evidence — `specs/002-multi-distro-support/lab-results.md`
 
 ## Phase 6 — polish and port
 
 - [X] T029 Docs: README, `docs/tools.md` family notes, `docs/configuration.md`, 001 pointers —
       `README.md`, `docs/*.md`, `specs/001-linux-devops-tools/spec.md`
-- [ ] T030 Merge the MR after T026 + T028
-- [ ] T031 Public variant: same behaviour minus `tests/lab/` and `lab-results.md`, on a branch in
+- [X] T030 Merge the MR after T026 + T028
+- [X] T031 Public variant: same behaviour minus `tests/lab/` and `lab-results.md`, on a branch in
       the GitHub checkout for the operator to push (FR-022)
