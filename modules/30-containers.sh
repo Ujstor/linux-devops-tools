@@ -245,9 +245,21 @@ _containers_service() {
       _containers_kernel_tree || return 0
       _containers_kernel_extras
       if ! run_sudo systemctl enable --now docker.service; then
-        _containers_fail "docker.service could not be started (systemctl status docker)"
-        _containers_daemon_said
-        return 0
+        # A first start can outrun a slow box. On the 2 GB Leap lab guest dockerd
+        # waited 15s for the containerd it spawns, gave up, and that containerd
+        # stayed behind in the unit's cgroup ("left-over process") holding its
+        # state, so systemd's three restarts all timed out against it and the
+        # start limit ended it; the second run started it in three seconds.
+        # So: stop the leftovers, clear the limit, and try exactly once more.
+        log_info "docker.service did not start — clearing its leftovers and retrying once"
+        run_sudo systemctl kill docker.service 2>/dev/null || true
+        sleep 10
+        run_sudo systemctl reset-failed docker.service 2>/dev/null || true
+        if ! run_sudo systemctl start docker.service; then
+          _containers_fail "docker.service could not be started (systemctl status docker)"
+          _containers_daemon_said
+          return 0
+        fi
       fi
       changed "docker.service enabled and started"
       ;;
