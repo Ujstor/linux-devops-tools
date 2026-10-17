@@ -71,10 +71,11 @@ report_externally_managed() {
 # correct — silently overwriting a working entrypoint is exactly the class of
 # damage MUST-FIX S9 exists to prevent — but it must not abort this module.
 #
-# So: collisions are detected up front and REPORTED with the two ways out, each
-# tool is attempted independently, and a failure is a warning rather than a
-# module failure. DEVENV_UV_FORCE=1 is the explicit opt-in that lets uv take the
-# entrypoints over.
+# So: collisions are detected up front and reported, and each one uv refuses is
+# MOVED to retired-bin by uv_tool_install (never deleted; DEVENV_KEEP_SHADOWS=1
+# keeps them), then the tool is installed again. Each tool is attempted
+# independently, and a failure is a warning rather than a module failure.
+# DEVENV_UV_FORCE=1 still lets uv overwrite the entrypoints instead.
 
 # uv_owns_entrypoint NAME — 0 when ~/.local/bin/NAME is a uv shim.
 uv_owns_entrypoint() {
@@ -99,10 +100,9 @@ report_pip_user_collisions() {
   [ ${#clash[@]} -gt 0 ] || return 0
   log_warn "these commands in $LOCAL_BIN were not installed by uv (a 'pip3 install --user' from the old setup):"
   log_warn "  ${clash[*]}"
-  log_warn "  uv will refuse to overwrite them, and this module will report each refusal and move on."
-  log_warn "  To hand them over to uv, pick one:"
-  log_warn "    python3 -m pip uninstall --break-system-packages -y <package>   # then re-run"
-  log_warn "    DEVENV_UV_FORCE=1 devenv --only lang-python                     # let uv replace the shims"
+  log_warn "  each one uv refuses is moved to ${DEVENV_STATE:-~/.local/state/devops-env}/retired-bin/.local_bin"
+  log_warn "  and the tool installed again (DEVENV_KEEP_SHADOWS=1 keeps them). The pip packages"
+  log_warn "  themselves stay in ~/.local/lib; drop them with  python3 -m pip uninstall --break-system-packages -y <package>"
   return 0
 }
 
@@ -116,7 +116,7 @@ py_tool() {
   [ "${DEVENV_UV_FORCE:-0}" = 1 ] && extra=(--force)
   uv_tool_install "$spec" ${extra[@]+"${extra[@]}"} "$@" || {
     log_warn "uv tool install $spec did not succeed — continuing"
-    log_warn "  if it says the executable already exists, see the pip3 note above"
+    log_warn "  if it says an executable already exists, see the pip3 note above"
     return 0
   }
   return 0
@@ -128,7 +128,10 @@ py_tool() {
 
 install_python_tools() {
   # K34. Do not drop a --with: the collections import these from the SAME venv.
-  py_tool ansible --with kubernetes --with netaddr --with jmespath
+  # --with-executables-from: ansible-playbook and friends are ansible-core's
+  # entry points, not the metapackage's (see modules/40-iac.sh, same spec).
+  py_tool ansible --expect-bin ansible-playbook --with-executables-from ansible-core \
+    --with kubernetes --with netaddr --with jmespath
   py_tool ansible-lint
   py_tool checkov
   py_tool yamllint

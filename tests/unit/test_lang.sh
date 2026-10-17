@@ -128,4 +128,113 @@ assert_eq 34 "$(printf '%s\n' "$roster" | grep -cE '^[a-z0-9-]+=https://[^ ]+$')
   'every entry is NAME=https://…'
 assert_eq '' "$(printf '%s\n' "$roster" | cut -d= -f1 | sort | uniq -d)" 'no NAME appears twice'
 
+t_section 'uv_tool_install: a pip --user entry point is retired, then the install retried'
+
+# The stub behaves like uv 0.12 where it matters: an entry point whose name a
+# file it does not own already holds is refused, naming every such file, and the
+# whole tool is rolled back. Entry points are links into the tool directory, and
+# `ansible` without --with-executables-from ansible-core gets ansible-community
+# only — the real metapackage's behaviour.
+unset UV_TOOL_DIR UV_TOOL_BIN_DIR XDG_BIN_HOME XDG_DATA_HOME
+UVBIN="$HOME/.local/bin"
+UVTOOLS="$HOME/.local/share/uv/tools"
+UVLIST="$stub/uv-list"
+export UVBIN UVTOOLS UVLIST
+mkdir -p "$UVBIN" "$UVTOOLS"
+: >"$UVLIST"
+cat >"$stub/bin/uv" <<'UV'
+#!/usr/bin/env bash
+case "$1 $2" in
+  'tool list')
+    if [ -s "$UVLIST" ]; then cat "$UVLIST"; fi
+    exit 0
+    ;;
+  'tool install') ;;
+  *) exit 0 ;;
+esac
+tool=$3
+shift 3
+own=$tool extra=''
+if [ "$tool" = ansible ]; then own=ansible-community; fi
+while [ $# -gt 0 ]; do
+  if [ "$1" = --with-executables-from ] && [ "$2" = ansible-core ]; then
+    extra='ansible ansible-playbook'
+  fi
+  shift
+done
+bins="$own $extra"
+# Like uv: the --with-executables-from package's conflicts are reported first,
+# the tool's own only on the next attempt.
+for group in "$extra" "$own"; do
+  clash=()
+  for b in $group; do
+    f=$UVBIN/$b
+    if [ -e "$f" ] && [ "$(readlink -f "$f")" != "$UVTOOLS/$tool/bin/$b" ]; then clash+=("$b"); fi
+  done
+  if [ ${#clash[@]} -eq 1 ]; then
+    echo "error: Executable already exists: ${clash[0]} (use \`--force\` to overwrite)" >&2
+    exit 2
+  elif [ ${#clash[@]} -gt 1 ]; then
+    list=$(printf '%s, ' "${clash[@]}")
+    echo "error: Executables already exist: ${list%, } (use \`--force\` to overwrite)" >&2
+    exit 2
+  fi
+done
+mkdir -p "$UVTOOLS/$tool/bin"
+awk -v t="$tool" '/^[^ -]/ { skip = ($1 == t) } !skip' "$UVLIST" >"$UVLIST.new"
+{
+  cat "$UVLIST.new"
+  echo "$tool v1.0.0"
+  for b in $bins; do echo "- $b"; done
+} >"$UVLIST"
+for b in $bins; do
+  printf '#!/bin/sh\necho uv-%s\n' "$b" >"$UVTOOLS/$tool/bin/$b"
+  chmod 0755 "$UVTOOLS/$tool/bin/$b"
+  ln -sfn "$UVTOOLS/$tool/bin/$b" "$UVBIN/$b"
+done
+echo "Installed executables: $bins"
+UV
+chmod 0755 "$stub/bin/uv"
+pip_script() { printf '#!/usr/bin/python3\nimport sys\nsys.exit(0)\n' >"$UVBIN/$1" && chmod 0755 "$UVBIN/$1"; }
+retired="$DEVENV_STATE/retired-bin/.local_bin"
+
+pip_script checkov
+pip_script checkov.cmd
+uv_tool_install checkov >/dev/null 2>&1
+assert_eq 'uv-checkov' "$("$UVBIN/checkov")" 'checkov is now the uv entry point'
+assert_file "$retired/checkov" 'the pip script is kept under retired-bin, not deleted'
+assert_no_file "$retired/checkov.cmd" 'a name uv does not install is left alone'
+
+uv_tool_install ansible >/dev/null 2>&1
+assert_eq 'uv-ansible-community' "$("$UVBIN/ansible-community")" 'the metapackage alone gives ansible-community'
+assert_no_file "$UVBIN/ansible-playbook" 'and no ansible-playbook'
+
+pip_script ansible-playbook
+uv_tool_install ansible --expect-bin ansible-playbook --with-executables-from ansible-core >/dev/null 2>&1
+assert_eq 'uv-ansible-playbook' "$("$UVBIN/ansible-playbook")" \
+  'a tool without its expected entry point is installed again, the pip copy retired'
+assert_file "$retired/ansible-playbook" 'that pip copy is kept under retired-bin'
+
+# The live box: pip owned BOTH groups, so uv refused ansible-core's entry points,
+# then — once those were gone — ansible-community.
+: >"$UVLIST"
+rm -f "$UVBIN"/ansible*
+pip_script ansible-community
+pip_script ansible
+rc=0
+uv_tool_install ansible --expect-bin ansible-playbook --with-executables-from ansible-core >/dev/null 2>&1 || rc=$?
+assert_eq 0 "$rc" 'conflicts uv reports one package at a time are all cleared'
+assert_eq 'uv-ansible-community' "$("$UVBIN/ansible-community")" 'ansible-community is the uv entry point'
+assert_eq 'uv-ansible' "$("$UVBIN/ansible")" 'and so is ansible'
+
+DEVENV_CHANGED_LAST=0
+uv_tool_install ansible --expect-bin ansible-playbook --with-executables-from ansible-core >/dev/null 2>&1
+assert_eq '0' "$DEVENV_CHANGED_LAST" 'a second run changes nothing'
+
+pip_script yamllint
+rc=0
+DEVENV_KEEP_SHADOWS=1 uv_tool_install yamllint >/dev/null 2>&1 || rc=$?
+assert_eq 1 "$rc" 'DEVENV_KEEP_SHADOWS=1 keeps the pip script, and the install fails as uv said'
+assert_no_file "$retired/yamllint" 'nothing was moved'
+
 t_summary

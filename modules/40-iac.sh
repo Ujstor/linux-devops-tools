@@ -303,7 +303,13 @@ _iac_python_tools() {
   # community.general's json_query filter needs `jmespath`. `pip --user`
   # satisfied that by accident because everything shared one prefix; a per-tool
   # venv does not, so they must be named here.
-  if ! uv_tool_install ansible --with kubernetes --with netaddr --with jmespath; then
+  # `ansible` is the collections metapackage: its only entry point is
+  # ansible-community. ansible, ansible-playbook and the rest belong to
+  # ansible-core, so they are asked for by name — without it a fresh box had no
+  # ansible-playbook, and an old one only the pip --user copy. Keep this spec
+  # identical to modules/23-lang-python.sh's.
+  if ! uv_tool_install ansible --expect-bin ansible-playbook --with-executables-from ansible-core \
+    --with kubernetes --with netaddr --with jmespath; then
     _iac_fail "uv tool install ansible failed"
   fi
 

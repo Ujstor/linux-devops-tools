@@ -2,7 +2,7 @@
 # NOTE: k9s already binds <r> Restart, <s> Scale, <i> Set Image, <Shift-J> Jump Owner here.
 plugins:
   stern-workload:
-    shortCut: Ctrl-L
+    shortCut: Ctrl-T
     description: Stern (whole workload)
     scopes: [deployments, statefulsets, daemonsets, jobs, cronjobs]
     command: bash

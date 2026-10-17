@@ -76,6 +76,7 @@ cmake                       =                         =                         
 pkg-config                  pkgconf-pkg-config        pkgconf-pkg-config              pkgconf
 libssl-dev                  openssl-devel             libopenssl-devel                openssl
 wireguard-tools             =                         =                               =
+w3m                         =                         =                               =                       # EPEL on EL
 
 # --- 05-base-packages: tier 3 (INSTALL_EXTRAS) --------------------------------
 multitail                   =                         =                               -                       # EPEL; not in Leap 16; arch: AUR only
@@ -135,6 +136,7 @@ qrencode                    =                         =                         
 # --- 45-cloud -----------------------------------------------------------------
 gh                          =                         =                               github-cli              # EPEL on EL
 azure-cli                   =                         -                               -                       # EPEL 9 / Fedora / Microsoft's repo; uv elsewhere
+google-cloud-cli            =                         -                               -                       # Google's el<major> repo; none for SUSE or Arch
 
 # --- 50-editors ---------------------------------------------------------------
 libevent-dev                libevent-devel            libevent-devel                  libevent

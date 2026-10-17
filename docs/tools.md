@@ -50,6 +50,7 @@ whose *source* differs per family are in [Per-family sources](#per-family-source
 | bind9-dnsutils, nmap, mtr-tiny, traceroute, tcpdump, iputils-ping | apt | — | `base-packages` | dev | DNS and reachability are load-bearing on any fleet |
 | apache2-utils | apt | — | `base-packages` | dev | `htpasswd`, for ingress basic-auth |
 | wireguard-tools | apt | — | `base-packages` | dev | the **tools**, not `wireguard` — there is no kernel module under WSL |
+| w3m | apt | — | `base-packages` | dev | a text browser, run by name. It registers as the `www-browser` alternative; auth-sso's `~/.local/bin/www-browser` shim shadows that, so `xdg-open` never lands in it — `devenv doctor` checks the shim still wins |
 | sshpass | apt | — | `base-packages` | dev | Ansible `--ask-pass` |
 | multitail, ipmitool, putty-tools, openjdk-17-jre-headless | apt | — | `base-packages` | full | on-prem and out-of-band work |
 | nala | apt | — | `base-packages` | dev | only when the archive already has a candidate. Never a backport, never a third-party repo, and it never redefines `sudo` |
@@ -242,7 +243,7 @@ Decoded secrets go to the pager and nowhere else — never to a file, never to a
 | terraform-docs | rel | `iac` | dev | `TERRAFORM_DOCS_VERSION` |
 | tflint | rel | `iac` | dev | `TFLINT_VERSION` |
 | bao (OpenBao) | deb | `iac` | dev | `OPENBAO_VERSION`. The package is `openbao`, the binary is `bao` |
-| ansible, ansible-lint | uv | `iac` | dev | installed `--with kubernetes --with netaddr --with jmespath`, or half the playbooks fail at runtime |
+| ansible, ansible-lint | uv | `iac` | dev | installed `--with kubernetes --with netaddr --with jmespath`, or half the playbooks fail at runtime, and `--with-executables-from ansible-core` — the `ansible` metapackage's only command is `ansible-community`; `ansible-playbook` and the rest are ansible-core's |
 | checkov, yamllint, detect-secrets, pre-commit | uv | `lang-python`, `repo-dev` | dev | |
 | mkdocs (+ mkdocs-material, mike) | uv `mkdocs --with mkdocs-material --with mike` | `iac` | dev | the theme ships no console script, so `mkdocs` is the tool and the theme is a `--with`; `mike` is an mkdocs plugin and needs the same venv. `iac` **owns** it; `lang-python` installs the same spec only when `mkdocs` is absent, so a profile without `iac` still gets one |
 | black | uv | `lang-python` | full | |
@@ -250,6 +251,7 @@ Decoded secrets go to the pager and nowhere else — never to a file, never to a
 | gh | apt-v | `cloud` | min | |
 | glab | deb from **gitlab.com** | `cloud` | dev | `GLAB_VERSION`. Released on GitLab, not GitHub — the GitHub feed is empty |
 | azure-cli | apt-v, else uv | `cloud` | dev | no `trixie` build exists; the module maps newer suites to `noble` and finally skips with a reason |
+| google-cloud-cli (`gcloud`) | apt-v | `cloud` | dev | `packages.cloud.google.com`, suite `cloud-sdk`. An existing gcloud — the package, or the SDK unpacked in `$HOME` — is left alone; `gcloud components update` moves it |
 | hcloud | go | `cloud` | dev | `GO_TOOL_HCLOUD` |
 | crane | go | `cloud` | dev | `GO_TOOL_CRANE` |
 
@@ -272,6 +274,7 @@ package → a verified release artifact → `uv tool install` → a skip with th
 | packer (`INSTALL_PACKER=1`) | HashiCorp deb | HashiCorp `.repo` | **skip** — no repository, no package | distro `packer` |
 | gh | `cli.github.com` deb | `cli.github.com` rpm `.repo` | the same rpm tree | distro `github-cli` |
 | azure-cli | `packages.microsoft.com` deb, else uv | EL 9/10: `packages.microsoft.com/rhel/<major>/prod`, `includepkgs=azure-cli`. Fedora: uv | uv | uv |
+| google-cloud-cli | `packages.cloud.google.com` deb, pinned by `/etc/apt/preferences.d/google-cloud-cli` so nothing but `google-cloud-cli*` comes from it — the suite also carries a `kubectl` at epoch `1:` that would replace pkgs.k8s.io's | EL: `cloud-sdk-el<major>-<arch>` `.repo`, `includepkgs=google-cloud-cli`, `repo_gpgcheck=0` as Google's own. Fedora: **skip** — no Fedora build, and Fedora rejects the EL one's signature | **skip** — Google publishes none | **skip** — Google publishes none |
 | trivy | `get.trivy.dev` deb | `get.trivy.dev` rpm `.repo` | the same rpm tree | distro `trivy` |
 
 Where Microsoft publishes nothing (Fedora, Leap, Arch), an `azure-cli` a distribution package
@@ -326,7 +329,9 @@ row of `config/packages.map` says which.
 | mise | script | `MISE_VERSION` | `lang-node` | opt | only when `NODE_MANAGER=mise` |
 
 Python CLIs are **always** `uv tool install`. Nothing in this repository moves, renames or deletes
-`EXTERNALLY-MANAGED`, and `pip --user` is not used anywhere.
+`EXTERNALLY-MANAGED`, and `pip --user` is not used anywhere. An old `pip install --user` script in
+`~/.local/bin` that uv refuses to overwrite (`Executable already exists`) is moved to `retired-bin`
+and the tool installed again — see [migration §5.6](migration.md#56-two-of-everything-on-path).
 
 ## AI agents (module `ai`)
 

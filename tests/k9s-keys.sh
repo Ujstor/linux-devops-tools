@@ -23,7 +23,8 @@
 # is a name tcell can resolve (k9s's asKey() walks tcell.KeyNames), every plugin
 # has the four fields k9s's JSON schema requires, and no two plugins share a
 # name — k9s loads every file in plugins/ into ONE map, so a repeated name means
-# one of them is silently dropped.
+# one of them is silently dropped. And every binding has its row in
+# docs/shortcuts.md, so the page cannot fall behind the config.
 #
 # Exit 0 = clean. Exit 1 = at least one finding, each printed with its file.
 set -euo pipefail
@@ -185,6 +186,14 @@ check_keys=$(
       R["space"]   = "Mark (view_table.go)"
       R["?"]       = "Help (view_table.go)"
       R["/"]       = "Filter (view_table.go)"
+      # never reach k9s at all inside tmux: tmux-config and the own ~/.tmux.conf
+      # both load vim-tmux-navigator, which binds these in the ROOT table (no
+      # prefix) to select-pane. The stern plugins sat on Ctrl-L and did nothing.
+      # Its fifth key, Ctrl-backslash, is no tcell name k9s accepts anyway.
+      R["Ctrl-H"]  = "tmux root table: vim-tmux-navigator select-pane -L"
+      R["Ctrl-J"]  = "tmux root table: vim-tmux-navigator select-pane -D"
+      R["Ctrl-K"]  = "tmux root table: vim-tmux-navigator select-pane -U"
+      R["Ctrl-L"]  = "tmux root table: vim-tmux-navigator select-pane -R"
       # bound only in some views — an `all`-scoped plugin hits them too
       S["containers" SUBSEP "Shift-F"] = "PortForward (container.go)"
       S["pods" SUBSEP "Ctrl-K"]        = "Kill (pod.go)"
@@ -211,7 +220,7 @@ check_keys=$(
         print "C1 " what ": bare \"" key "\" belongs to k9s core (lowercase keys and 0-9 are taken in every view)"
         next
       }
-      if (key in R) print "C1 " what ": " key " is k9s core — " R[key]
+      if (key in R) print "C1 " what ": " key " is already bound — " R[key]
       if ((scope SUBSEP key) in S) print "C1 " what ": " key " is k9s core in " scope " — " S[scope SUBSEP key]
       if (scope == "all" || scope == "*") {
         for (k in S) {
@@ -349,6 +358,38 @@ if [ -n "$undecl" ]; then
   done <<<"$undecl"
 else
   ok "every secret-decoding plugin is dangerous:true (hidden on readOnly contexts)"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. docs/shortcuts.md lists every binding — a table row carrying the key in
+#    backticks and the description verbatim, so a plugin added, re-keyed or
+#    renamed without the page fails here instead of going missing from it.
+# ---------------------------------------------------------------------------
+shortcuts_md=${SHORTCUTS_MD:-$DEVENV_HOME/docs/shortcuts.md}
+if [ -f "$shortcuts_md" ]; then
+  undocumented=$(
+    awk '
+      /^  [a-z0-9-]+:$/ { name = $1; sub(/:$/, "", name); key = "" }
+      /^    shortCut:/ { key = $2 }
+      /^    description:/ {
+        d = $0; sub(/^    description: */, "", d)
+        printf "%s\t%s\t%s\t%s\n", FILENAME, name, key, d
+      }
+    ' "$plugin_dir"/*.yaml "$hotkeys" \
+      | while IFS=$'\t' read -r file name key desc; do
+        grep -F -- "\`$key\`" "$shortcuts_md" | grep -qF -- "| $desc |" \
+          || printf '%s %s (%s, "%s")\n' "${file##*/}" "$name" "$key" "$desc"
+      done
+  )
+  if [ -n "$undocumented" ]; then
+    while IFS= read -r l; do
+      report "DOCS $l has no row in ${shortcuts_md#"$DEVENV_HOME"/}"
+    done <<<"$undocumented"
+  else
+    ok "every plugin and hotkey has a row in docs/shortcuts.md"
+  fi
+else
+  report "DOCS ${shortcuts_md#"$DEVENV_HOME"/} is missing"
 fi
 
 # ---------------------------------------------------------------------------

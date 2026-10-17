@@ -72,19 +72,20 @@ sha256_of() {
 }
 
 # fs_needs_root PATH
-#   Returns 0 when writing PATH would require root (its nearest existing ancestor
-#   is not writable by this user), 1 when the current user can write it.
+#   Returns 0 when writing PATH would require root, 1 when the current user can
+#   write it. Every writer here REPLACES the file (install, mv, rm, ln), and that
+#   is an operation on the directory: a user-owned /usr/local/bin/virtctl in the
+#   root-owned /usr/local/bin is writable and still cannot be replaced
+#   ("install: cannot remove ...: Permission denied"). So the nearest existing
+#   directory must be writable, and so must PATH itself when it exists.
 #   Read-only; safe inside `if`.
 fs_needs_root() {
   local p=${1:?fs_needs_root: PATH required} d
-  if [ -e "$p" ]; then
-    [ -w "$p" ] && return 1
-    return 0
-  fi
   d=$(dirname -- "$p")
   while [ ! -e "$d" ] && [ "$d" != / ]; do d=$(dirname -- "$d"); done
-  [ -w "$d" ] && return 1
-  return 0
+  [ -w "$d" ] || return 0
+  if [ -e "$p" ] && [ ! -w "$p" ]; then return 0; fi
+  return 1
 }
 
 # _fs_run_for PATH CMD…   (private) — run CMD through the right privilege gate.
@@ -153,6 +154,38 @@ fs_install() {
   return 0
 }
 
+# fs_retire_file FILE REASON
+#   Moves FILE, a leftover in a per-user bin directory, to
+#   $DEVENV_STATE/retired-bin/<dir>/<name> — never deletes it, so undoing it is
+#   one `mv`. <dir> is FILE's directory relative to $HOME with / as _ (go_bin,
+#   .local_bin), and a name already taken there gets a timestamp, so nothing that
+#   was retired earlier is overwritten. REASON finishes the log line.
+#   Kept, with a warning: a file the manifest says this repo wrote, and every
+#   file under DEVENV_KEEP_SHADOWS=1.
+#   Honours --dry-run. Returns 0 when FILE was moved (or would be), 1 when it is
+#   still in place.
+fs_retire_file() {
+  local f=${1:?fs_retire_file: FILE required} why=${2:-} tag dest
+  if manifest_owns "$f"; then return 1; fi
+  if [ "${DEVENV_KEEP_SHADOWS:-0}" = 1 ]; then
+    log_warn "$f kept (DEVENV_KEEP_SHADOWS=1)${why:+ — $why}"
+    return 1
+  fi
+  tag=${f%/*}
+  tag=${tag#"$HOME"/}
+  tag=${tag//\//_}
+  dest=${DEVENV_STATE:?DEVENV_STATE unset}/retired-bin/$tag/${f##*/}
+  if [ -e "$dest" ] || [ -L "$dest" ]; then dest=$dest.$(date -u +%Y%m%dT%H%M%SZ); fi
+  ensure_dir "${dest%/*}" 0700 || return 1
+  run mv -- "$f" "$dest" || {
+    log_warn "could not move $f aside"
+    return 1
+  }
+  log_info "retired $f${why:+: $why}; the old one is now $dest"
+  changed "retired $f"
+  return 0
+}
+
 # fs_retire_shadows BIN KEEP
 #   KEEP is the copy of BIN a PINNED install just put in place or just verified.
 #   Any other copy of BIN in a per-user tool directory — ~/bin, ~/.local/bin,
@@ -170,7 +203,7 @@ fs_install() {
 #   Honours --dry-run. Always returns 0.
 fs_retire_shadows() {
   local bin=${1:?fs_retire_shadows: BIN required} keep=${2:?fs_retire_shadows: KEEP required}
-  local keep_real dir cand real tag dest first gopath=${GOPATH:-$HOME/go}
+  local keep_real dir cand real first gopath=${GOPATH:-$HOME/go}
   [ -x "$keep" ] || return 0
   keep_real=$(readlink -f -- "$keep" 2>/dev/null) || keep_real=$keep
   gopath=${gopath%%:*}
@@ -181,27 +214,10 @@ fs_retire_shadows() {
     [ "$cand" != "$keep" ] || continue
     real=$(readlink -f -- "$cand" 2>/dev/null) || real=$cand
     [ "$real" != "$keep_real" ] || continue
-    if manifest_owns "$cand"; then continue; fi
-    if [ "${DEVENV_KEEP_SHADOWS:-0}" = 1 ]; then
-      log_warn "$cand is a second copy of $bin beside $keep — kept (DEVENV_KEEP_SHADOWS=1)"
-      continue
-    fi
-    # ~/go/bin -> go_bin, ~/.local/bin -> .local_bin: one directory per origin,
-    # so two leftovers of the same name never collide.
-    tag=${dir#"$HOME"/}
-    tag=${tag//\//_}
-    dest=${DEVENV_STATE:?DEVENV_STATE unset}/retired-bin/$tag/$bin
-    if [ -e "$dest" ] || [ -L "$dest" ]; then dest=$dest.$(date -u +%Y%m%dT%H%M%SZ); fi
-    ensure_dir "${dest%/*}" 0700 || continue
-    run mv -- "$cand" "$dest" || {
-      log_warn "could not move $cand aside — it is still a second copy of $bin beside $keep"
-      continue
-    }
-    log_info "retired $cand: $keep is the copy this repo installs; the old one is now $dest"
+    fs_retire_file "$cand" "$keep is the copy this repo installs" || continue
     case $dir in
       "${CARGO_HOME:-$HOME/.cargo}/bin") log_info "  cargo still lists it — 'cargo uninstall' forgets it" ;;
     esac
-    changed "retired $cand (a second copy of $bin)"
   done
   is_dry_run && return 0
   first=$(command -v "$bin" 2>/dev/null) || return 0

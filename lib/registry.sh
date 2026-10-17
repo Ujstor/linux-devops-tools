@@ -337,6 +337,11 @@ summary_print() {
 
   log_step "next steps"
   log_info "start a new login shell so the new PATH and completions take effect:  exec bash -l"
+  # A shell that already ran a retired command has its old path hashed, and
+  # answers "~/go/bin/k9s: No such file or directory" until it forgets it.
+  if grep -qs $'\tretired ' "${DEVENV_RUNDIR:-}/changed"; then
+    log_warn "old copies were moved to retired-bin: in every shell that is already open, run  hash -r"
+  fi
   if os_is_wsl; then
     log_info "if /etc/wsl.conf changed, run 'wsl --shutdown' in Windows first"
   fi
