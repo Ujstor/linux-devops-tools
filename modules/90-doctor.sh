@@ -513,10 +513,11 @@ check_path() {
   fi
 
   # The same command from two package managers is the classic "why is my version
-  # old" bug. Report both paths; never remove anything.
+  # old" bug. Report both paths; doctor removes nothing — the installing module
+  # retires a per-user copy (fs_retire_shadows).
   local cmd dupes=0
   local -a paths
-  for cmd in golangci-lint fzf jq rg fd bat nvim tree-sitter yq helm kubectl k9s starship opencode; do
+  for cmd in golangci-lint fzf jq rg fd bat eza nvim tree-sitter yq helm helm-docs kubectl k9s kubecolor kubelogin starship opencode; do
     # readlink -f first: /bin is a symlink to /usr/bin on every target, and two
     # names for one inode are not a duplicate installation.
     mapfile -t paths < <(
@@ -529,7 +530,13 @@ check_path() {
       dupes=$((dupes + 1))
     fi
   done
-  if [ "$dupes" = 0 ]; then ok 'no command on PATH is shadowed by a second copy'; fi
+  if [ "$dupes" = 0 ]; then
+    ok 'no command on PATH is shadowed by a second copy'
+  else
+    hint 'a copy in ~/bin, ~/.local/bin, ~/.cargo/bin or ~/go/bin is moved to'
+    hint "  ${DEVENV_STATE:-~/.local/state/devops-env}/retired-bin by the module that installs the pinned one;"
+    hint '  a brew, nvm or distribution copy is never touched — remove it with its own tool'
+  fi
 
   if have picom || have compton; then
     warn 'picom/compton are on PATH on a terminal-only box'

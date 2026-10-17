@@ -117,6 +117,7 @@ none of them is safe to imply:
 | `DEVENV_ADOPT_BASHRC=1` (`--adopt-bashrc`) | `shell` | replace a symlinked `~/.bashrc` with a real file, after a backup |
 | `--starship MODE` | `shell` | `upstream` \| `overlay` \| `adopt` \| `print` (default `print`) |
 | `DEVENV_BACKUP_KEEP` | `lib/fs.sh` | how many timestamped backups to keep per file (default 5) |
+| `DEVENV_KEEP_SHADOWS=1` | `lib/fs.sh` | keep an old copy of a pinned tool in `~/bin`, `~/.local/bin`, `~/.cargo/bin` or `~/go/bin` and only report it, instead of moving it to `retired-bin` — see [migration §5.6](migration.md#56-two-of-everything-on-path) |
 | `NO_COLOR` / `DEVENV_NO_COLOR` | all | disable colour. Colour is off automatically when stderr is not a terminal |
 
 ## `~/.config/devops-env/`

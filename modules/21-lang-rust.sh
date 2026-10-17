@@ -60,21 +60,27 @@ install_rustup() {
   return 0
 }
 
-# report_cargo_leftovers
+# retire_cargo_leftovers
 #   The live box has eza and tldr under ~/.cargo/bin from the old scripts. They
-#   still work; they are simply no longer this repo's install path, and a
-#   cargo-built binary will shadow the packaged one because 10-path.sh puts
-#   ~/.cargo/bin ahead of /usr/local/bin. Reported, never removed (MUST-FIX S9).
-report_cargo_leftovers() {
-  local b moved=()
+#   are no longer this repo's install path (eza is a pinned release, tldr the
+#   distribution's tealdeer), and 10-path.sh puts ~/.cargo/bin ahead of
+#   /usr/local/bin, so the cargo build is what would run. Once the packaged copy
+#   exists the cargo one is moved aside (fs_retire_shadows); while it is the only
+#   copy it stays, and is reported.
+retire_cargo_leftovers() {
+  local b p kept=()
   for b in eza tldr; do
-    [ -x "$CARGO_HOME_DIR/bin/$b" ] && moved+=("$b")
+    [ -x "$CARGO_HOME_DIR/bin/$b" ] || continue
+    for p in "/usr/local/bin/$b" "/usr/bin/$b" "$HOME/.local/bin/$b"; do
+      [ -x "$p" ] || continue
+      fs_retire_shadows "$b" "$p"
+      continue 2
+    done
+    kept+=("$b")
   done
-  [ ${#moved[@]} -gt 0 ] || return 0
-  log_warn "these are still installed from cargo: ${moved[*]}"
-  log_warn "  This repo now installs them from apt or a pinned release instead, and"
-  log_warn "  ~/.cargo/bin comes first on PATH, so the cargo build is what you run."
-  log_warn "  To switch over:  cargo uninstall ${moved[*]}"
+  [ ${#kept[@]} -gt 0 ] || return 0
+  log_warn "still installed from cargo, with no packaged copy yet: ${kept[*]}"
+  log_warn "  base-packages (tldr) and shell (eza) install them; the run after that retires these"
   return 0
 }
 
@@ -93,7 +99,7 @@ module_main() {
       || log_warn "rustup update failed"
   fi
 
-  report_cargo_leftovers
+  retire_cargo_leftovers
 
   if [ ! -s "$CARGO_HOME_DIR/env" ] && ! is_dry_run; then
     log_warn "$CARGO_HOME_DIR/env is missing — ~/.bashrc.d/20-lang.sh will not add cargo to PATH"

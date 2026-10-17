@@ -16,7 +16,8 @@ matrix — not just promised.
    downloads.
 3. **Your work is never destroyed.** Conflicting packages are *reported*, not purged. Only files
    carrying this repository's marker are ever pruned. A symlinked dotfile is written through,
-   never replaced.
+   never replaced. An old copy of a pinned tool in `~/bin`, `~/.local/bin`, `~/.cargo/bin` or
+   `~/go/bin` is *moved* to `retired-bin`, never deleted.
 4. **No pin outside `versions.env`,** and every key there names its owning module.
 5. **Nothing private.** No real hostname, cluster, context, realm, client id, IP or kubeconfig
    content — in code, comments, examples, docs or tests.
@@ -36,6 +37,7 @@ matrix — not just promised.
 | never | instead |
 |---|---|
 | remove a package you installed | `pkg_remove`/`pkg_purge` are report-only; removal needs `--allow-pkg-remove` **and** a confirmation |
+| delete an old copy of a tool it installs | a copy in `~/bin`, `~/.local/bin`, `~/.cargo/bin` or `~/go/bin` that would shadow the pinned one is moved to `~/.local/state/devops-env/retired-bin/` (`fs_retire_shadows`); `DEVENV_KEEP_SHADOWS=1` keeps it. A brew, nvm or distribution copy is never touched |
 | replace a symlinked `~/.bashrc` | it writes *through* the symlink. `--adopt-bashrc` is the explicit opt-out, and it backs up first |
 | delete a file you edited | the manifest stores a digest per file; a changed file is kept and reported by `uninstall` |
 | touch `~/.bashrc.d/90-local.sh` | created empty once, then never again — not by `--prune`, not by `uninstall` |

@@ -278,8 +278,24 @@ go install github.com/Azure/kubelogin@latest
 
 The old scripts installed some tools twice by different routes. The doctor reports each duplicate
 with **both** paths — commonly `golangci-lint` in `/usr/local/bin` *and* `~/go/bin`, `fzf`/`jq`/`rg`/
-`fd` from apt *and* Homebrew, and `nvim` from apt *and* `/usr/local/bin`. Removing one is your call;
-nothing is removed for you.
+`fd` from apt *and* Homebrew, and `nvim` from apt *and* `/usr/local/bin`.
+
+The ones in a **per-user bin directory** — `~/bin`, `~/.local/bin`, `~/.cargo/bin`, `~/go/bin` — are
+cleaned up for you. `10-path.sh` puts those four ahead of `/usr/local/bin` and `/usr/bin`, so an old
+`go install` or `cargo install` copy is what actually runs: a go-installed k9s 0.50.9 in `~/go/bin`
+hid the pinned 0.51.0, and three of the shipped k9s plugins failed to load against its key map. Once a
+module has installed, or confirmed, the **pinned** copy of a tool, any other copy of it in those four
+directories is moved — never deleted — to `~/.local/state/devops-env/retired-bin/<dir>/`:
+
+| was | now |
+|---|---|
+| `~/go/bin/k9s` | `~/.local/state/devops-env/retired-bin/go_bin/k9s` |
+| `~/.cargo/bin/eza` | `~/.local/state/devops-env/retired-bin/.cargo_bin/eza` |
+
+Undo one with a single `mv` back. `DEVENV_KEEP_SHADOWS=1` keeps them all and only reports. Left alone
+in every case: a copy Homebrew, nvm or the distribution owns (the doctor still names it — remove it
+with that tool), a file this repository wrote itself, and a newer copy next to a distribution package
+that was only chosen because it meets a minimum version (`zoxide`, `fzf` on a release that ships one).
 
 Two specific ones worth knowing about:
 

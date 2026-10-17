@@ -394,7 +394,7 @@ k8sp_report_schema_gen() {
 #   carries. It is NOT a helm plugin (it is a standalone Go binary), and it was
 #   in the old scripts/tools.sh, so it must not vanish in the rewrite.
 #   Installed into ~/.local/bin because this module never asks for root; the
-#   go-installed copy in ~/go/bin, if any, is reported by k8sp_warn_shadow.
+#   go-installed copy in ~/go/bin, if any, is moved aside by k8sp_retire_shadow.
 #   The asset uses GoReleaser's mixed convention — Linux_x86_64 for amd64 and
 #   Linux_arm64 for arm64 — so the arch string is computed rather than tokenised.
 k8sp_helm_docs() {
@@ -407,32 +407,28 @@ k8sp_helm_docs() {
   esac
   if [ -x "$dest/helm-docs" ] && "$dest/helm-docs" --version 2>&1 | grep -qF "$want"; then
     log_skip "helm-docs is already $want"
-    k8sp_warn_shadow helm-docs "$dest/helm-docs"
+    k8sp_retire_shadow helm-docs "$dest/helm-docs"
     return 0
   fi
   gh_release_install norwoodj/helm-docs "helm-docs_{version}_Linux_${arch}.tar.gz" \
     helm-docs "$HELM_DOCS_VERSION" --dest "$dest" --checksum-asset checksums.txt || rc=$?
   case $rc in
-    0) k8sp_warn_shadow helm-docs "$dest/helm-docs" ;;
+    0) ;;
     78) log_skip "helm-docs publishes no asset for ${OS_ARCH_DPKG:-this architecture}" ;;
     *) log_warn "helm-docs failed to install (exit $rc)" ;;
   esac
   return 0
 }
 
-# k8sp_warn_shadow BIN PATH
-#   Reports another copy of BIN that wins on PATH. On the live box ~/go/bin
-#   precedes ~/.local/bin and holds a go-installed helm-docs. Reported, never
-#   removed. Always returns 0.
-k8sp_warn_shadow() {
-  local bin=${1:?k8sp_warn_shadow: BIN required} mine=${2:?k8sp_warn_shadow: PATH required} found
-  have "$bin" || return 0
-  found=$(command -v "$bin") || return 0
-  [ "$found" != "$mine" ] || return 0
-  [ -e "$mine" ] || return 0
-  log_warn "$bin on PATH is $found, while this module installed $mine"
-  log_warn "  the earlier PATH entry wins; 'devenv doctor' lists duplicate binaries."
-  return 0
+# k8sp_retire_shadow BIN PATH
+#   PATH is the copy this module installed. Another copy of BIN in a per-user bin
+#   directory — the live box had a go-installed helm-docs in ~/go/bin — is moved
+#   aside by fs_retire_shadows (DEVENV_KEEP_SHADOWS=1 only reports it). The
+#   install path retires on its own; this covers the already-current skip.
+#   Always returns 0.
+k8sp_retire_shadow() {
+  local bin=${1:?k8sp_retire_shadow: BIN required} mine=${2:?k8sp_retire_shadow: PATH required}
+  fs_retire_shadows "$bin" "$mine"
 }
 
 # ---------------------------------------------------------------------------

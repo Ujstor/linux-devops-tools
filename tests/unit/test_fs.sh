@@ -197,4 +197,52 @@ assert_eq 'v1' "$(cat "$bak")" 'with the original content'
 assert_eq '' "$(backup_file "$sandbox/does-not-exist")" \
   'and is a silent no-op for a file that does not exist'
 
+t_section 'fs_retire_shadows: a stale per-user copy is moved aside, never deleted'
+
+# The real failure: a go-installed k9s 0.50.9 in ~/go/bin ran instead of the
+# pinned 0.51.0 the release installed. GOPATH/CARGO_HOME from the caller's
+# environment must not point the helper outside the sandbox.
+unset GOPATH CARGO_HOME
+mkexe() { mkdir -p "${1%/*}" && printf '#!/bin/sh\necho "%s"\n' "$2" >"$1" && chmod 0755 "$1"; }
+keep="$sandbox/usr/bin/k9s"
+mkexe "$keep" 'k9s 0.51.0'
+mkexe "$HOME/go/bin/k9s" 'k9s 0.50.9'
+mkexe "$HOME/.cargo/bin/k9s" 'k9s cargo'
+mkdir -p "$HOME/.local/bin"
+ln -s "$keep" "$HOME/.local/bin/k9s"
+retired="$DEVENV_STATE/retired-bin"
+
+(DEVENV_DRY_RUN=1 fs_retire_shadows k9s "$keep") >/dev/null 2>&1
+assert_file "$HOME/go/bin/k9s" '--dry-run moves nothing'
+assert_no_file "$retired" 'and creates no retired-bin directory'
+
+(DEVENV_KEEP_SHADOWS=1 fs_retire_shadows k9s "$keep") >/dev/null 2>&1
+assert_file "$HOME/go/bin/k9s" 'DEVENV_KEEP_SHADOWS=1 keeps the copy'
+
+fs_retire_shadows k9s "$keep" 2>/dev/null
+assert_no_file "$HOME/go/bin/k9s" 'the ~/go/bin copy is gone from PATH'
+assert_eq 'k9s 0.50.9' "$("$retired/go_bin/k9s")" 'and kept, runnable, under retired-bin/go_bin'
+assert_eq 'k9s cargo' "$("$retired/.cargo_bin/k9s")" 'a ~/.cargo/bin copy goes to retired-bin/.cargo_bin'
+assert_symlink "$HOME/.local/bin/k9s" 'a link that resolves to KEEP is left alone'
+assert_file "$keep" 'KEEP itself is never touched'
+
+DEVENV_CHANGED_LAST=0
+fs_retire_shadows k9s "$keep" 2>/dev/null
+assert_eq '0' "$DEVENV_CHANGED_LAST" 'a second run changes nothing'
+
+mkexe "$HOME/go/bin/k9s" 'k9s again'
+fs_retire_shadows k9s "$keep" 2>/dev/null
+assert_eq 'k9s 0.50.9' "$("$retired/go_bin/k9s")" 'a later leftover never overwrites an earlier retired one'
+assert_eq '1' "$(find "$retired/go_bin" -name 'k9s.*' | wc -l)" 'it gets a timestamped name instead'
+
+mine="$HOME/.local/bin/helm-docs"
+mkexe "$sandbox/usr/bin/helm-docs" 'helm-docs pinned'
+mkexe "$mine" 'helm-docs shim'
+manifest_record "$mine"
+fs_retire_shadows helm-docs "$sandbox/usr/bin/helm-docs" 2>/dev/null
+assert_file "$mine" 'a file the manifest says this repo wrote is never retired'
+
+fs_retire_shadows k9s "$sandbox/does/not/exist" 2>/dev/null
+assert_symlink "$HOME/.local/bin/k9s" 'a KEEP that is not installed retires nothing'
+
 t_summary

@@ -459,11 +459,16 @@ gh_release_install() {
   }
   ver=$(tag_to_version "$tag")
 
-  # 0. version gate — an already-correct install costs zero network.
-  local cur
-  if cur=$(bin_version "$bin" "$vcmd" "$vre"); then
+  # 0. version gate — an already-correct install costs zero network. DEST/BIN
+  #    when it exists, not whatever PATH finds first: a stale copy in ~/go/bin
+  #    ahead of DEST made every run "upgrade" DEST again (golangci-lint 2.13.1
+  #    over the pinned 2.14.0), and never converged.
+  local cur at=$bin
+  if [ -x "$dest/$bin" ]; then at=$dest/$bin; fi
+  if cur=$(bin_version "$at" "$vcmd" "$vre"); then
     if [ "${cur#v}" = "$ver" ]; then
       log_skip "$bin is already $ver"
+      if [ "$at" != "$bin" ]; then fs_retire_shadows "$bin" "$at"; fi
       return 0
     fi
     log_info "$bin $cur -> $ver"
@@ -557,6 +562,7 @@ gh_release_install() {
   work=$(devenv_tmpdir) || return 1
   _net_place "$ar" "$asset" "$work" "$strip" "$apath" "$bin" "$dest" "$mode" "$ver" || rc=$?
   rm -rf -- "$work"
+  if [ "$rc" = 0 ]; then fs_retire_shadows "$bin" "$dest/$bin"; fi
   return "$rc"
 }
 
@@ -750,6 +756,7 @@ pkg_release_install() {
     case $installed in
       "$ver" | "$ver"-* | *:"$ver" | *:"$ver"-*)
         log_skip "$pkg is already $ver"
+        _net_pkg_retire_shadows "$bin"
         return 0
         ;;
     esac
@@ -778,6 +785,7 @@ pkg_release_install() {
       _net_pkg_asset "$kind" "$pkg" "$ver" "$tag" "$base" "$asset" || prc=$?
       # 78 is pkg_install_local saying this family installs no package file at
       # all; the archive is then the install, as on pacman. Anything else stands.
+      if [ "$prc" = 0 ]; then _net_pkg_retire_shadows "$bin"; fi
       if [ "$prc" != 78 ] || [ -z "$tarball" ]; then return "$prc"; fi
       log_info "$pkg: this ${OS_PKG_MGR:-unknown} system takes no .$kind — installing the release archive"
     elif [ -n "$tarball" ]; then
@@ -794,6 +802,16 @@ pkg_release_install() {
   fi
   gh_release_install "$repo" "$tarball" "$bin" "$tag" --base-url "$base" \
     ${verify[0]+"${verify[@]}"} ${archive[0]+"${archive[@]}"}
+}
+
+# _net_pkg_retire_shadows BIN   (private)
+#   A .deb or .rpm puts its command in /usr/bin. Once that package is the pinned
+#   version, an older copy of BIN in a per-user bin directory is retired
+#   (fs_retire_shadows). Always returns 0.
+_net_pkg_retire_shadows() {
+  local bin=${1:?_net_pkg_retire_shadows: BIN required}
+  if [ -x "/usr/bin/$bin" ]; then fs_retire_shadows "$bin" "/usr/bin/$bin"; fi
+  return 0
 }
 
 # _net_pkg_asset KIND PKG VER TAG BASE ASSET   (private)

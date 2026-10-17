@@ -269,4 +269,28 @@ FAKE_CODE=000 FAKE_FAIL=1
 assert_eq 2 "$(http_rc)" 'a transport failure is "could not tell"'
 unset -f curl
 
+t_section 'gh_release_install gates on DEST, and retires the copy that shadowed it'
+
+# The real gh_release_install again (stubbed above for pkg_release_install).
+# ~/go/bin/tool reports 1.2.2 and comes first on PATH; DEST/tool is the pinned
+# 1.2.3. Gating on PATH re-installed DEST on every run and never converged.
+# shellcheck source=/dev/null
+source <(sed -n '/^gh_release_install() {/,/^}/p' "$DEVENV_HOME/lib/net.sh")
+unset GOPATH CARGO_HOME
+gh_resolve_version() { printf '%s\n' "$2"; }
+dest="$T_SANDBOX/usr/local/bin"
+mkdir -p "$dest" "$HOME/go/bin"
+printf '#!/bin/sh\necho "tool 1.2.3"\n' >"$dest/tool"
+printf '#!/bin/sh\necho "tool 1.2.2"\n' >"$HOME/go/bin/tool"
+chmod 0755 "$dest/tool" "$HOME/go/bin/tool"
+: >"$CALLS"
+PUBLISHED=''
+rc=0
+PATH="$HOME/go/bin:$PATH" gh_release_install acme/tool 'tool_{version}.tar.gz' tool v1.2.3 \
+  --dest "$dest" --no-verify --no-verify-reason 'a unit test' 2>/dev/null || rc=$?
+assert_eq 0 "$rc" 'DEST/tool already at the pin is a skip, whatever PATH finds first'
+assert_eq '' "$(cat "$CALLS")" 'with no download'
+assert_no_file "$HOME/go/bin/tool" 'and the shadowing ~/go/bin copy is moved aside'
+assert_file "$DEVENV_STATE/retired-bin/go_bin/tool" 'to retired-bin, not deleted'
+
 t_summary

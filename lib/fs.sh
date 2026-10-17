@@ -153,6 +153,66 @@ fs_install() {
   return 0
 }
 
+# fs_retire_shadows BIN KEEP
+#   KEEP is the copy of BIN a PINNED install just put in place or just verified.
+#   Any other copy of BIN in a per-user tool directory — ~/bin, ~/.local/bin,
+#   ~/.cargo/bin, $GOPATH/bin — is a leftover of an earlier `go install`,
+#   `cargo install` or hand copy, and ~/.bashrc.d/10-path.sh puts all four ahead
+#   of /usr/local/bin and /usr/bin: a go-installed k9s 0.50.9 in ~/go/bin hid the
+#   pinned 0.51.0, and three shipped plugins failed to load against its key map.
+#   Such a copy is MOVED, never deleted, to $DEVENV_STATE/retired-bin/<dir>/BIN,
+#   so undoing it is one `mv`. Left alone: a copy that resolves to KEEP, a file
+#   the manifest says this repo wrote, and every copy under DEVENV_KEEP_SHADOWS=1
+#   (then only reported). A copy another package manager owns (brew, nvm) is
+#   never touched, only named when it still wins on PATH.
+#   Not for a distribution package that merely meets a minimum version: that is
+#   no reason to retire a newer copy of the user's.
+#   Honours --dry-run. Always returns 0.
+fs_retire_shadows() {
+  local bin=${1:?fs_retire_shadows: BIN required} keep=${2:?fs_retire_shadows: KEEP required}
+  local keep_real dir cand real tag dest first gopath=${GOPATH:-$HOME/go}
+  [ -x "$keep" ] || return 0
+  keep_real=$(readlink -f -- "$keep" 2>/dev/null) || keep_real=$keep
+  gopath=${gopath%%:*}
+  for dir in "$HOME/bin" "$HOME/.local/bin" "${CARGO_HOME:-$HOME/.cargo}/bin" "$gopath/bin"; do
+    cand=$dir/$bin
+    [ -e "$cand" ] || [ -L "$cand" ] || continue
+    [ ! -d "$cand" ] || continue
+    [ "$cand" != "$keep" ] || continue
+    real=$(readlink -f -- "$cand" 2>/dev/null) || real=$cand
+    [ "$real" != "$keep_real" ] || continue
+    if manifest_owns "$cand"; then continue; fi
+    if [ "${DEVENV_KEEP_SHADOWS:-0}" = 1 ]; then
+      log_warn "$cand is a second copy of $bin beside $keep — kept (DEVENV_KEEP_SHADOWS=1)"
+      continue
+    fi
+    # ~/go/bin -> go_bin, ~/.local/bin -> .local_bin: one directory per origin,
+    # so two leftovers of the same name never collide.
+    tag=${dir#"$HOME"/}
+    tag=${tag//\//_}
+    dest=${DEVENV_STATE:?DEVENV_STATE unset}/retired-bin/$tag/$bin
+    if [ -e "$dest" ] || [ -L "$dest" ]; then dest=$dest.$(date -u +%Y%m%dT%H%M%SZ); fi
+    ensure_dir "${dest%/*}" 0700 || continue
+    run mv -- "$cand" "$dest" || {
+      log_warn "could not move $cand aside — it is still a second copy of $bin beside $keep"
+      continue
+    }
+    log_info "retired $cand: $keep is the copy this repo installs; the old one is now $dest"
+    case $dir in
+      "${CARGO_HOME:-$HOME/.cargo}/bin") log_info "  cargo still lists it — 'cargo uninstall' forgets it" ;;
+    esac
+    changed "retired $cand (a second copy of $bin)"
+  done
+  is_dry_run && return 0
+  first=$(command -v "$bin" 2>/dev/null) || return 0
+  case $first in /*) ;; *) return 0 ;; esac
+  first=$(readlink -f -- "$first" 2>/dev/null) || return 0
+  if [ "$first" != "$keep_real" ]; then
+    log_warn "$bin on PATH is still $first, not $keep — another package manager's copy, left as it is"
+  fi
+  return 0
+}
+
 # ensure_dir PATH [MODE]
 #   Creates PATH and any missing parents. MODE defaults to 0755.
 #   No-op (silent, no dry-run line) when the directory already exists.
