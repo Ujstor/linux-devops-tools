@@ -348,27 +348,14 @@ ts_install_cargo() {
   return 0
 }
 
-# ts_report_shadow DEST VERSION
+# ts_retire_shadow DEST
 #   ~/.bashrc.d/10-path.sh puts ~/.local/bin and then ~/.cargo/bin AHEAD of
-#   /usr/local/bin, so a tree-sitter in either one is the one nvim actually runs.
-#   Reported when it is not the pinned version, never removed (MUST-FIX S9) — it
-#   is most likely an earlier nvim-config install.sh's cargo build. Returns 0.
-ts_report_shadow() {
-  local dest=$1 ver=$2 p v cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
-  # In PATH order: once the loop reaches DEST, everything after it comes later on
-  # PATH and shadows nothing.
-  for p in "$HOME/.local/bin/tree-sitter" "$cargo_bin/tree-sitter"; do
-    [ "$p" != "$dest/tree-sitter" ] || break
-    [ -x "$p" ] || continue
-    v=$(ts_version_of "$p") || v=''
-    [ "$v" != "$ver" ] || continue
-    log_warn "$p (${v:-version unknown}) comes before $dest/tree-sitter on PATH, so nvim runs it, not $ver."
-    case $p in
-      "$cargo_bin"/*) log_warn "  it is a cargo install; to drop it:  cargo uninstall tree-sitter-cli" ;;
-      *) log_warn "  remove it, or replace it with $ver" ;;
-    esac
-  done
-  return 0
+#   /usr/local/bin, so a tree-sitter in either one is the one nvim actually runs —
+#   most likely an earlier nvim-config install.sh's cargo build. Once DEST holds
+#   the pinned CLI, such a copy is moved aside (fs_retire_shadows; its cargo
+#   record goes with `cargo uninstall tree-sitter-cli`). Returns 0.
+ts_retire_shadow() {
+  fs_retire_shadows tree-sitter "${1:?ts_retire_shadow: DEST required}/tree-sitter"
 }
 
 # install_tree_sitter
@@ -408,7 +395,7 @@ install_tree_sitter() {
   fi
   if [ "$cur" = "$ver" ]; then
     log_skip "tree-sitter is already $ver ($dest/tree-sitter)"
-    ts_report_shadow "$dest" "$ver"
+    ts_retire_shadow "$dest"
     return 0
   fi
   if [ -n "$cur" ]; then log_info "tree-sitter $cur -> $ver"; fi
@@ -424,7 +411,7 @@ install_tree_sitter() {
     log_warn "no tree-sitter CLI was installed — nvim-treesitter cannot compile parsers until one is"
     return 0
   fi
-  ts_report_shadow "$dest" "$ver"
+  ts_retire_shadow "$dest"
   return 0
 }
 

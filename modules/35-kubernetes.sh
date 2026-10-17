@@ -59,8 +59,8 @@
 # to. That distinction is load-bearing on the live box: ~/go/bin comes before
 # /usr/local/bin on its PATH and holds older go-installed copies of k9s,
 # kubecolor and kubelogin, so a `command -v` gate would reinstall on every run,
-# for ever. Where such a shadow exists it is REPORTED (k8s_warn_shadow) and
-# never removed — that is the user's file.
+# for ever. Where such a shadow exists it is MOVED ASIDE (k8s_retire_shadow,
+# fs_retire_shadows) into $DEVENV_STATE/retired-bin, never deleted.
 #
 # arm64. Every asset pattern here is arch-derived and was checked against the
 # pinned release: amd64 and arm64 both resolve. A project that ships no asset
@@ -132,25 +132,19 @@ k8s_bin_at() {
   [ "${v#v}" = "${want#v}" ]
 }
 
-# k8s_warn_shadow BIN
-#   Reports — never repairs — a copy of BIN inside $HOME that takes precedence
-#   over the one this module installed. On the live box ~/go/bin precedes
-#   /usr/local/bin, and it holds go-installed k9s, kubecolor, kubelogin and
-#   helm-docs. Removing them is the user's decision (`devenv doctor` lists
-#   duplicate binaries); silently shadowing them is not. Always returns 0.
-k8s_warn_shadow() {
-  local bin=${1:?k8s_warn_shadow: BIN required} found sys
-  have "$bin" || return 0
-  found=$(command -v "$bin") || return 0
-  case $found in
-    "$HOME"/*) ;;
-    *) return 0 ;;
-  esac
+# k8s_retire_shadow BIN
+#   Moves aside a copy of BIN in a per-user bin directory that would win over the
+#   one this module installed (fs_retire_shadows). On the live box ~/go/bin
+#   preceded /usr/local/bin and held go-installed k9s, kubecolor and kubelogin:
+#   k9s 0.50.9 ran instead of the pinned 0.51.0 and three of the shipped plugins
+#   failed to load. The release installers already do this for what they place;
+#   this covers kubectl and helm, which come from vendor package repositories.
+#   DEVENV_KEEP_SHADOWS=1 keeps the copy and only reports it. Always returns 0.
+k8s_retire_shadow() {
+  local bin=${1:?k8s_retire_shadow: BIN required} sys
   for sys in "$K8S_BIN_DIR/$bin" "/usr/bin/$bin"; do
     [ -x "$sys" ] || continue
-    log_warn "$bin on PATH is $found (yours), while this module installed $sys"
-    log_warn "  the earlier PATH entry wins. Remove your copy or reorder PATH;"
-    log_warn "  'devenv doctor' lists every duplicate binary it can see."
+    fs_retire_shadows "$bin" "$sys"
     return 0
   done
   return 0
@@ -186,13 +180,13 @@ k8s_release() {
   if k8s_bin_at "$K8S_BIN_DIR/$bin" "$want" "$vcmd"; then
     log_skip "$bin is already $want"
     K8S_OK+=("$bin $want")
-    k8s_warn_shadow "$bin"
+    k8s_retire_shadow "$bin"
     return 0
   fi
+  # gh_release_install retires a shadowing copy of what it installs itself.
   gh_release_install "$repo" "$asset" "$bin" "$version" \
     --dest "$K8S_BIN_DIR" --version-cmd "$vcmd" "$@" || rc=$?
   k8s_record "$bin $want" "$rc"
-  if [ "$rc" = 0 ]; then k8s_warn_shadow "$bin"; fi
   return 0
 }
 
@@ -222,13 +216,13 @@ k8s_pkg() {
   if [ "${OS_PKG_MGR:-apt}" != apt ] && k8s_bin_at "$K8S_BIN_DIR/$bin" "$want" "$vcmd"; then
     log_skip "$bin is already $want"
     K8S_OK+=("$pkg $want")
-    k8s_warn_shadow "$bin"
+    k8s_retire_shadow "$bin"
     return 0
   fi
+  # pkg_release_install retires a shadowing copy of what it installs itself.
   pkg_release_install "$repo" "$pkg" "$version" "$@" \
     --dest "$K8S_BIN_DIR" --version-cmd "$vcmd" || rc=$?
   k8s_record "$pkg $want" "$rc"
-  if [ "$rc" = 0 ]; then k8s_warn_shadow "$bin"; fi
   return 0
 }
 
@@ -320,7 +314,7 @@ k8s_kubectl_release() {
   if k8s_bin_at "$K8S_BIN_DIR/kubectl" "$ver" 'version --client'; then
     log_skip "kubectl is already $ver"
     K8S_OK+=("kubectl $ver (dl.k8s.io)")
-    k8s_warn_shadow kubectl
+    k8s_retire_shadow kubectl
     return 0
   fi
   arch=${OS_ARCH_GO:-amd64}
@@ -347,7 +341,7 @@ k8s_kubectl_release() {
   log_success "installed kubectl $ver -> $K8S_BIN_DIR/kubectl"
   changed "kubectl $ver"
   K8S_OK+=("kubectl $ver (dl.k8s.io)")
-  k8s_warn_shadow kubectl
+  k8s_retire_shadow kubectl
   return 0
 }
 
@@ -366,7 +360,7 @@ k8s_helm() {
   if k8s_bin_at "$K8S_BIN_DIR/helm" "$ver" 'version --short'; then
     log_skip "helm is already $ver"
     K8S_OK+=("helm $ver")
-    k8s_warn_shadow helm
+    k8s_retire_shadow helm
     return 0
   fi
   if cur=$(bin_version helm 'version --short'); then
@@ -429,7 +423,7 @@ k8s_helm() {
   log_success "installed helm $ver -> $K8S_BIN_DIR/helm"
   changed "helm $ver"
   K8S_OK+=("helm $ver")
-  k8s_warn_shadow helm
+  k8s_retire_shadow helm
   return 0
 }
 
