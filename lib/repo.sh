@@ -950,6 +950,45 @@ _repo_azure_cli_deb() {
   repo_add azure-cli "$uri" "$suite" main "$key"
 }
 
+# repo_ensure_google_cloud_cli
+#   debian  packages.cloud.google.com/apt, suite literally `cloud-sdk`, so one
+#           identical line on Debian and Ubuntu with no codename logic.
+#   redhat  packages.cloud.google.com/yum/repos/cloud-sdk-el<major>-<arch>/ —
+#           el8, el9 and el10, x86_64 and aarch64, all published (verified
+#           2026-10-17). Fedora has no tree of its own and takes el10, the newest.
+#           repo_gpgcheck is OFF, as in Google's own .repo: repomd.xml.asc is
+#           signed by 35BAA0B3…DC6315A3, which rpm-package-key.gpg does not hold
+#           (verified 2026-10-17), so dnf would refuse every metadata refresh.
+#           gpgcheck stays on — each package is signed with the published key.
+#           The rpm key is a different FILE from the apt key, with its own pin.
+#   suse, arch -> 78: Google publishes neither.
+repo_ensure_google_cloud_cli() {
+  case ${OS_FAMILY:-} in
+    debian | '')
+      local key
+      key=$(repo_key google-cloud "https://packages.cloud.google.com/apt/doc/apt-key.gpg" asc \
+        --sha256 "${GOOGLE_CLOUD_KEY_SHA256:-}") || return 1
+      repo_add google-cloud-cli "https://packages.cloud.google.com/apt" cloud-sdk main "$key"
+      ;;
+    redhat)
+      local el=${OS_VERSION_MAJOR:-} uri key
+      if [ "${OS_DISTRO:-}" = fedora ]; then el=10; fi
+      uri="https://packages.cloud.google.com/yum/repos/cloud-sdk-el${el}-${OS_ARCH_RPM:-}"
+      repo_rpm_published "$uri" || {
+        log_warn "packages.cloud.google.com publishes no cloud-sdk-el${el:-?}-${OS_ARCH_RPM:-?} repository"
+        return 78
+      }
+      key=$(repo_key google-cloud-rpm "https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg" rpm \
+        --sha256 "${GOOGLE_CLOUD_RPM_KEY_SHA256:-}") || return 1
+      repo_add_rpm google-cloud-cli 'Google Cloud CLI' "$uri" "$key" 0 includepkgs=google-cloud-cli
+      ;;
+    *)
+      log_skip "google-cloud-cli: Google publishes no ${OS_FAMILY} package of gcloud"
+      return 78
+      ;;
+  esac
+}
+
 # repo_ensure_trivy
 #   debian  suite `generic` (see _repo_trivy_deb).
 #   redhat, suse  get.trivy.dev/rpm/releases/$basearch/ (it answers 302 to

@@ -78,7 +78,7 @@ skip are in [docs/tools.md](docs/tools.md#per-family-sources).
 | group | in the default profile |
 |---|---|
 | **Base system** | [curl](https://github.com/curl/curl), [wget](https://gitlab.com/gnuwget/wget), [git](https://github.com/git/git), tar, [xz](https://github.com/tukaani-project/xz), zip, unzip, build-essential, pkg-config, [CMake](https://github.com/Kitware/CMake), [bash-completion](https://github.com/scop/bash-completion), [less](https://github.com/gwsw/less), [vim](https://github.com/vim/vim), [htop](https://github.com/htop-dev/htop), [tree](https://gitlab.com/OldManProgrammer/unix-tree), [jq](https://github.com/jqlang/jq), [psmisc](https://gitlab.com/psmisc/psmisc), [net-tools](https://github.com/ecki/net-tools), [ripgrep](https://github.com/BurntSushi/ripgrep), [fd](https://github.com/sharkdp/fd), [bat](https://github.com/sharkdp/bat), [trash-cli](https://github.com/andreafrancia/trash-cli), [autojump](https://github.com/wting/autojump), [tealdeer](https://github.com/tealdeer-rs/tealdeer) (`tldr`), [nala](https://gitlab.com/volian/nala) |
-| **Network** | `dig` and `nslookup` ([BIND 9](https://gitlab.isc.org/isc-projects/bind9)), [nmap](https://github.com/nmap/nmap), [mtr](https://github.com/traviscross/mtr), traceroute, [tcpdump](https://github.com/the-tcpdump-group/tcpdump), `ping` ([iputils](https://github.com/iputils/iputils)), `htpasswd` ([apache2-utils](https://github.com/apache/httpd)), [wireguard-tools](https://github.com/WireGuard/wireguard-tools), sshpass |
+| **Network** | `dig` and `nslookup` ([BIND 9](https://gitlab.isc.org/isc-projects/bind9)), [nmap](https://github.com/nmap/nmap), [mtr](https://github.com/traviscross/mtr), traceroute, [tcpdump](https://github.com/the-tcpdump-group/tcpdump), `ping` ([iputils](https://github.com/iputils/iputils)), `htpasswd` ([apache2-utils](https://github.com/apache/httpd)), [wireguard-tools](https://github.com/WireGuard/wireguard-tools), sshpass, [w3m](https://github.com/tats/w3m) |
 | **Shell** | [mybash](https://github.com/Ujstor/mybash), [starship](https://github.com/starship/starship), [fzf](https://github.com/junegunn/fzf), [zoxide](https://github.com/ajeetdsouza/zoxide), [eza](https://github.com/eza-community/eza), [gdu](https://github.com/dundee/gdu), [7-Zip](https://github.com/ip7z/7zip), and the symbols-only [Nerd Font](https://github.com/ryanoasis/nerd-fonts) on a machine with its own display (not WSL, not headless) |
 | **Git** | [gh](https://github.com/cli/cli), [glab](https://gitlab.com/gitlab-org/cli), [delta](https://github.com/dandavison/delta) |
 | **Editors** | [Neovim](https://github.com/neovim/neovim), the [tree-sitter](https://github.com/tree-sitter/tree-sitter) CLI that nvim-config compiles its parsers with, [tmux](https://github.com/tmux/tmux), the [nvim-config](https://github.com/Ujstor/nvim-config) and [tmux-config](https://github.com/Ujstor/tmux-config) checkouts (tmux-config with [TPM](https://github.com/tmux-plugins/tpm) and its plugins), and `tmux-save-session.sh` |
@@ -90,7 +90,7 @@ skip are in [docs/tools.md](docs/tools.md#per-family-sources).
 | **Helm plugins** | [diff](https://github.com/databus23/helm-diff), [schema](https://github.com/losisin/helm-values-schema-json), [unittest](https://github.com/helm-unittest/helm-unittest), and the standalone [helm-docs](https://github.com/norwoodj/helm-docs) |
 | **Helm repositories** | 34 chart repositories added by default — argo, cilium, jetstack, prometheus, rook-release, gitlab, harbor and the rest are listed in [docs/tools.md](docs/tools.md#helm-chart-repositories) |
 | **IaC** | [Terraform](https://github.com/hashicorp/terraform), [TFLint](https://github.com/terraform-linters/tflint), [terraform-docs](https://github.com/terraform-docs/terraform-docs), [OpenBao](https://github.com/openbao/openbao) (`bao`) |
-| **Cloud** | [Azure CLI](https://github.com/Azure/azure-cli), [hcloud](https://github.com/hetznercloud/cli) |
+| **Cloud** | [Azure CLI](https://github.com/Azure/azure-cli), [Google Cloud CLI](https://cloud.google.com/sdk) (`gcloud`), [hcloud](https://github.com/hetznercloud/cli) |
 | **AI agents** | [Claude Code](https://github.com/anthropics/claude-code), [opencode](https://github.com/anomalyco/opencode) |
 | **Browser-less login** | this repository's own `open-url`, `clip`, `clip-paste`, `sso-login`, `sso-kubeconfig-add` and `web`, plus the `xdg-open`/`pbcopy` shims — [docs/sso.md](docs/sso.md) |
 | **WSL only** | [wslu](https://github.com/wslutilities/wslu) |
@@ -178,7 +178,7 @@ everything with a release binary will skip; the shell layer still works.
 * **`~/.config/k9s/`** — plugins, hotkeys, aliases and skins; `config.yaml` is created once and
   then left to k9s.
 * **`/etc/apt/sources.list.d/`** and **`/etc/apt/keyrings/`** — deb822 sources and armored keys
-  for Docker, HashiCorp, Kubernetes, GitHub CLI, Azure CLI and Trivy. On RedHat and SUSE, a `.repo` file
+  for Docker, HashiCorp, Kubernetes, GitHub CLI, Azure CLI, Google Cloud CLI and Trivy. On RedHat and SUSE, a `.repo` file
   in `/etc/yum.repos.d/` or `/etc/zypp/repos.d/` for each vendor that publishes one there, with
   its key in `/etc/pki/rpm-gpg/`, imported explicitly with `rpm --import`. Arch gets none.
 * **`/usr/local/bin`, `/usr/local/go`** — release binaries and the Go toolchain. Shared, so

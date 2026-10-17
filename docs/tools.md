@@ -50,6 +50,7 @@ whose *source* differs per family are in [Per-family sources](#per-family-source
 | bind9-dnsutils, nmap, mtr-tiny, traceroute, tcpdump, iputils-ping | apt | — | `base-packages` | dev | DNS and reachability are load-bearing on any fleet |
 | apache2-utils | apt | — | `base-packages` | dev | `htpasswd`, for ingress basic-auth |
 | wireguard-tools | apt | — | `base-packages` | dev | the **tools**, not `wireguard` — there is no kernel module under WSL |
+| w3m | apt | — | `base-packages` | dev | a text browser, run by name. It registers as the `www-browser` alternative; auth-sso's `~/.local/bin/www-browser` shim shadows that, so `xdg-open` never lands in it — `devenv doctor` checks the shim still wins |
 | sshpass | apt | — | `base-packages` | dev | Ansible `--ask-pass` |
 | multitail, ipmitool, putty-tools, openjdk-17-jre-headless | apt | — | `base-packages` | full | on-prem and out-of-band work |
 | nala | apt | — | `base-packages` | dev | only when the archive already has a candidate. Never a backport, never a third-party repo, and it never redefines `sudo` |
@@ -250,6 +251,7 @@ Decoded secrets go to the pager and nowhere else — never to a file, never to a
 | gh | apt-v | `cloud` | min | |
 | glab | deb from **gitlab.com** | `cloud` | dev | `GLAB_VERSION`. Released on GitLab, not GitHub — the GitHub feed is empty |
 | azure-cli | apt-v, else uv | `cloud` | dev | no `trixie` build exists; the module maps newer suites to `noble` and finally skips with a reason |
+| google-cloud-cli (`gcloud`) | apt-v | `cloud` | dev | `packages.cloud.google.com`, suite `cloud-sdk`. An existing gcloud — the package, or the SDK unpacked in `$HOME` — is left alone; `gcloud components update` moves it |
 | hcloud | go | `cloud` | dev | `GO_TOOL_HCLOUD` |
 | crane | go | `cloud` | dev | `GO_TOOL_CRANE` |
 
@@ -272,6 +274,7 @@ package → a verified release artifact → `uv tool install` → a skip with th
 | packer (`INSTALL_PACKER=1`) | HashiCorp deb | HashiCorp `.repo` | **skip** — no repository, no package | distro `packer` |
 | gh | `cli.github.com` deb | `cli.github.com` rpm `.repo` | the same rpm tree | distro `github-cli` |
 | azure-cli | `packages.microsoft.com` deb, else uv | EL 9/10: `packages.microsoft.com/rhel/<major>/prod`, `includepkgs=azure-cli`. Fedora: uv | uv | uv |
+| google-cloud-cli | `packages.cloud.google.com` deb | `cloud-sdk-el<major>-<arch>` `.repo` (Fedora: `el10`), `includepkgs=google-cloud-cli`, `repo_gpgcheck=0` as Google's own | **skip** — Google publishes none | **skip** — Google publishes none |
 | trivy | `get.trivy.dev` deb | `get.trivy.dev` rpm `.repo` | the same rpm tree | distro `trivy` |
 
 Where Microsoft publishes nothing (Fedora, Leap, Arch), an `azure-cli` a distribution package

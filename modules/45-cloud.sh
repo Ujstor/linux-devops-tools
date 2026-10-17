@@ -19,6 +19,9 @@
 #               a `uv tool install azure-cli` fallback when Microsoft publishes
 #               nothing usable for this release — which is Fedora, Leap and Arch
 #               (plan D6); EL 9/10 take Microsoft's rhel/<major>/prod repository.
+#   gcloud      google-cloud-cli from packages.cloud.google.com: the apt suite
+#               `cloud-sdk`, or Google's el<major> rpm tree. Google publishes
+#               nothing for SUSE or Arch, so there it is a logged skip.
 #   hcloud      Hetzner Cloud CLI (go install — half the fleet is Hetzner)
 #   crane       go-containerregistry's registry CLI (go install)
 #   diagnostics dig, mtr, traceroute, nmap, tcpdump, ping, htpasswd, wireguard
@@ -292,6 +295,34 @@ _cloud_azure_cli() {
   return 0
 }
 
+# _cloud_gcloud
+#   google-cloud-cli. A gcloud that is already installed — Google's own package,
+#   or the SDK tarball unpacked in $HOME — is left exactly as it is: `gcloud
+#   components update` and the package manager move it, never this module.
+#   Always returns 0.
+_cloud_gcloud() {
+  local rc=0
+  if pkg_installed google-cloud-cli; then
+    log_skip "google-cloud-cli is already installed"
+    return 0
+  fi
+  if have gcloud; then
+    log_skip "gcloud is on PATH at $(command -v gcloud) but no ${OS_PKG_MGR:-apt} package owns it — leaving it alone"
+    return 0
+  fi
+  repo_ensure_google_cloud_cli || rc=$?
+  if [ "$rc" = 78 ]; then return 0; fi
+  if [ "$rc" != 0 ]; then
+    log_warn "the google-cloud-cli ${OS_PKG_MGR:-apt} repository could not be configured — skipping gcloud"
+    return 0
+  fi
+  pkg_update
+  if ! apt_run pkg_install google-cloud-cli; then
+    _cloud_fail "google-cloud-cli could not be installed"
+  fi
+  return 0
+}
+
 # _cloud_go_tools
 #   hcloud and crane. go_install is a no-op when the recorded version already
 #   matches, and it logs a skip (never a failure) when Go itself is missing.
@@ -333,11 +364,12 @@ module_main() {
   _cloud_gh
   _cloud_glab
   _cloud_azure_cli
+  _cloud_gcloud
   _cloud_go_tools
   _cloud_diagnostics
 
   log_info "none of these CLIs is logged in by this module — that is 'sso-login'"
-  log_info "  (gh auth login, glab auth login, az login), which never runs unattended."
+  log_info "  (gh auth login, glab auth login, az login, gcloud auth login), which never runs unattended."
 
   if [ ${#CLOUD_FAILURES[@]} -gt 0 ]; then
     log_error "${#CLOUD_FAILURES[@]} step(s) in this module failed:"

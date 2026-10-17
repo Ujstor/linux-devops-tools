@@ -55,6 +55,12 @@ BASE_DEVOPS=(
   # `wireguard-tools`, NOT `wireguard`: the metapackage pulls wireguard-dkms, and
   # WSL2's own kernel cannot load the module. `wg` / `wg-quick` is what is wanted.
   wireguard-tools
+  # A text browser for reading a page on a box with no GUI. The Debian package
+  # registers itself as the `www-browser` alternative — exactly what made lynx a
+  # TTY-seizing trap for xdg-open (see lynx above) — so it is safe only because
+  # auth-sso's ~/.local/bin/www-browser shim shadows that alternative, and
+  # `devenv doctor` checks the shim still wins. Run it by name: `w3m <url>`.
+  w3m
 )
 
 # --- tier 3: INSTALL_EXTRAS=1 (set by the `full` profile) --------------------

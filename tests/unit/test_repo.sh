@@ -207,7 +207,7 @@ download() {
 : >"$SUDO_LOG"
 
 OS_FAMILY=arch OS_PKG_MGR=pacman OS_DISTRO=arch
-for v in docker hashicorp github_cli azure_cli trivy; do
+for v in docker hashicorp github_cli azure_cli google_cloud_cli trivy; do
   assert_status 78 "arch: repo_ensure_$v" "repo_ensure_$v"
 done
 assert_status 78 'arch: repo_ensure_kubernetes' repo_ensure_kubernetes v1.34
@@ -216,6 +216,7 @@ OS_FAMILY=suse OS_PKG_MGR=zypper OS_DISTRO=opensuse-leap
 assert_status 78 'suse: docker (the distribution builds it)' repo_ensure_docker
 assert_status 78 'suse: hashicorp (no SUSE tree; the release zip)' repo_ensure_hashicorp
 assert_status 78 'suse: azure-cli (uv tool install)' repo_ensure_azure_cli
+assert_status 78 'suse: google-cloud-cli (Google publishes none)' repo_ensure_google_cloud_cli
 
 OS_FAMILY=redhat OS_PKG_MGR=dnf OS_DISTRO=fedora OS_VERSION_MAJOR=44
 assert_status 78 'Fedora: Microsoft builds no azure-cli' repo_ensure_azure_cli
