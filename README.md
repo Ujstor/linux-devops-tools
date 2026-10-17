@@ -44,7 +44,8 @@ devenv --help
 devenv doctor
 ```
 
-Everyday commands, updating and uninstalling are [docs/usage.md](docs/usage.md).
+Everyday commands, updating and uninstalling are [docs/usage.md](docs/usage.md); every key, alias
+and k9s plugin is [docs/shortcuts.md](docs/shortcuts.md).
 
 ## Profiles
 

@@ -23,7 +23,8 @@
 # is a name tcell can resolve (k9s's asKey() walks tcell.KeyNames), every plugin
 # has the four fields k9s's JSON schema requires, and no two plugins share a
 # name — k9s loads every file in plugins/ into ONE map, so a repeated name means
-# one of them is silently dropped.
+# one of them is silently dropped. And every binding has its row in
+# docs/shortcuts.md, so the page cannot fall behind the config.
 #
 # Exit 0 = clean. Exit 1 = at least one finding, each printed with its file.
 set -euo pipefail
@@ -349,6 +350,38 @@ if [ -n "$undecl" ]; then
   done <<<"$undecl"
 else
   ok "every secret-decoding plugin is dangerous:true (hidden on readOnly contexts)"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. docs/shortcuts.md lists every binding — a table row carrying the key in
+#    backticks and the description verbatim, so a plugin added, re-keyed or
+#    renamed without the page fails here instead of going missing from it.
+# ---------------------------------------------------------------------------
+shortcuts_md=${SHORTCUTS_MD:-$DEVENV_HOME/docs/shortcuts.md}
+if [ -f "$shortcuts_md" ]; then
+  undocumented=$(
+    awk '
+      /^  [a-z0-9-]+:$/ { name = $1; sub(/:$/, "", name); key = "" }
+      /^    shortCut:/ { key = $2 }
+      /^    description:/ {
+        d = $0; sub(/^    description: */, "", d)
+        printf "%s\t%s\t%s\t%s\n", FILENAME, name, key, d
+      }
+    ' "$plugin_dir"/*.yaml "$hotkeys" \
+      | while IFS=$'\t' read -r file name key desc; do
+        grep -F -- "\`$key\`" "$shortcuts_md" | grep -qF -- "| $desc |" \
+          || printf '%s %s (%s, "%s")\n' "${file##*/}" "$name" "$key" "$desc"
+      done
+  )
+  if [ -n "$undocumented" ]; then
+    while IFS= read -r l; do
+      report "DOCS $l has no row in ${shortcuts_md#"$DEVENV_HOME"/}"
+    done <<<"$undocumented"
+  else
+    ok "every plugin and hotkey has a row in docs/shortcuts.md"
+  fi
+else
+  report "DOCS ${shortcuts_md#"$DEVENV_HOME"/} is missing"
 fi
 
 # ---------------------------------------------------------------------------
