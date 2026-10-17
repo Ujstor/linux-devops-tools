@@ -186,6 +186,14 @@ check_keys=$(
       R["space"]   = "Mark (view_table.go)"
       R["?"]       = "Help (view_table.go)"
       R["/"]       = "Filter (view_table.go)"
+      # never reach k9s at all inside tmux: tmux-config and the own ~/.tmux.conf
+      # both load vim-tmux-navigator, which binds these in the ROOT table (no
+      # prefix) to select-pane. The stern plugins sat on Ctrl-L and did nothing.
+      # Its fifth key, Ctrl-backslash, is no tcell name k9s accepts anyway.
+      R["Ctrl-H"]  = "tmux root table: vim-tmux-navigator select-pane -L"
+      R["Ctrl-J"]  = "tmux root table: vim-tmux-navigator select-pane -D"
+      R["Ctrl-K"]  = "tmux root table: vim-tmux-navigator select-pane -U"
+      R["Ctrl-L"]  = "tmux root table: vim-tmux-navigator select-pane -R"
       # bound only in some views — an `all`-scoped plugin hits them too
       S["containers" SUBSEP "Shift-F"] = "PortForward (container.go)"
       S["pods" SUBSEP "Ctrl-K"]        = "Kill (pod.go)"
@@ -212,7 +220,7 @@ check_keys=$(
         print "C1 " what ": bare \"" key "\" belongs to k9s core (lowercase keys and 0-9 are taken in every view)"
         next
       }
-      if (key in R) print "C1 " what ": " key " is k9s core — " R[key]
+      if (key in R) print "C1 " what ": " key " is already bound — " R[key]
       if ((scope SUBSEP key) in S) print "C1 " what ": " key " is k9s core in " scope " — " S[scope SUBSEP key]
       if (scope == "all" || scope == "*") {
         for (k in S) {

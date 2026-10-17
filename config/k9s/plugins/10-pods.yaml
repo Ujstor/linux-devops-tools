@@ -1,7 +1,9 @@
 # linux-devops-tools :: k9s plugins :: pods & containers
 plugins:
+  # Stern is Ctrl-T (tail), never Ctrl-L: inside tmux, vim-tmux-navigator takes
+  # Ctrl-H/J/K/L and Ctrl-\ before k9s sees them (tests/k9s-keys.sh rejects them).
   stern-pod:
-    shortCut: Ctrl-L
+    shortCut: Ctrl-T
     description: Stern (pod + all containers)
     scopes: [pods]
     command: kubectl
@@ -21,7 +23,7 @@ plugins:
       - ^$NAME$
 
   stern-container:
-    shortCut: Ctrl-L
+    shortCut: Ctrl-T
     description: Stern (this container)
     scopes: [containers]
     command: kubectl

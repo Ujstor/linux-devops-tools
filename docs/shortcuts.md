@@ -16,9 +16,9 @@ and every `dangerous` one is hidden on a `readOnly` context.
 | view | keys |
 |---|---|
 | **every view** | `Shift-Y` clean YAML, `Shift-E` watch events, `Shift-T` ownership tree, `Shift-B` copy ref, `Shift-I` describe in `$EDITOR`, `Shift-G` owning Helm release, `Shift-W` shell in this context/namespace, `Shift-Q` strip finalizers |
-| **pods** | `Ctrl-L` stern logs, `Shift-D` debug container (netshoot), `Shift-K` force delete, `Shift-M` Cilium endpoint + policy, `Shift-V` Kyverno verdicts |
-| **containers** | `Ctrl-L` stern this container, `Shift-D` debug this container, `Shift-C` image config (crane) |
-| **deployments / statefulsets / daemonsets** | `Ctrl-L` stern whole workload, `Shift-R` rollout status, `Shift-U` rollout undo |
+| **pods** | `Ctrl-T` stern logs, `Shift-D` debug container (netshoot), `Shift-K` force delete, `Shift-M` Cilium endpoint + policy, `Shift-V` Kyverno verdicts |
+| **containers** | `Ctrl-T` stern this container, `Shift-D` debug this container, `Shift-C` image config (crane) |
+| **deployments / statefulsets / daemonsets** | `Ctrl-T` stern whole workload, `Shift-R` rollout status, `Shift-U` rollout undo |
 | **nodes** | `Shift-D` root shell on node, `Shift-K` cordon + drain, `Shift-C` Cilium agent status, `Shift-H` shell in Cilium agent, `Shift-Z` pods on this node |
 | **secrets** | `Shift-D` decode all keys, `Shift-C` show one key, `Shift-M` edit decoded |
 | **helm** | `Shift-D` diff vs previous revision, `Shift-U` all values, `Shift-M` rendered manifest |
@@ -28,6 +28,23 @@ and every `dangerous` one is hidden on a `readOnly` context.
 | **anywhere (hotkeys)** | `F2` context, `F3` workloads, `F4` pods, `F5` nodes, `F6` events, `F7` Helm, `F8` Argo CD, `F9` ExternalSecrets, `F12` Kyverno reports, `Shift-L` Cilium policies |
 
 The tables below are the complete list, one row per binding, and the one `tests/k9s-keys.sh` checks.
+
+### Keys tmux takes first
+
+Inside tmux, vim-tmux-navigator binds **`Ctrl-H` `Ctrl-J` `Ctrl-K` `Ctrl-L` `Ctrl-\`** with no prefix
+to move between panes and nvim splits, so k9s never receives them. No plugin here uses one —
+`tests/k9s-keys.sh` rejects them — but three of k9s's own keys are lost in tmux:
+
+| k9s key | does | inside tmux |
+|---|---|---|
+| `Ctrl-K` | kill pod (pods) | `Ctrl-D` delete, this repo's `Shift-K` force delete, or the pass-through below |
+| `Ctrl-L` | rollback (replicasets) | prefix `C-l` — the navigator plugin passes it through (also bash's clear-screen) |
+| `Ctrl-\` | clear marks | `Space` on each marked row |
+
+For `Ctrl-K` as prefix `C-k`, add `bind C-k send-keys C-k` to `~/.tmux.conf` — prefix `C-k` is free in
+tmux-config.
+
+nvim adds nothing: neither config maps terminal mode, and its `C-h/j/k/l` are the same navigator moves.
 
 ### hotkeys (every view)
 
@@ -61,8 +78,8 @@ The tables below are the complete list, one row per binding, and the one `tests/
 
 | key | in view | does |
 |---|---|---|
-| `Ctrl-L` | pods | Stern (pod + all containers) |
-| `Ctrl-L` | containers | Stern (this container) |
+| `Ctrl-T` | pods | Stern (pod + all containers) |
+| `Ctrl-T` | containers | Stern (this container) |
 | `Shift-D` | pods | Debug (ephemeral netshoot) |
 | `Shift-D` | containers | Debug (target this container) |
 | `Shift-K` | pods | Force delete (grace 0) |
@@ -73,7 +90,7 @@ The tables below are the complete list, one row per binding, and the one `tests/
 
 | key | in view | does |
 |---|---|---|
-| `Ctrl-L` | deployments, statefulsets, daemonsets, jobs, cronjobs | Stern (whole workload) |
+| `Ctrl-T` | deployments, statefulsets, daemonsets, jobs, cronjobs | Stern (whole workload) |
 | `Shift-R` | deployments, statefulsets, daemonsets | Rollout status (watch) |
 | `Shift-U` | deployments, statefulsets, daemonsets | Rollout undo |
 
