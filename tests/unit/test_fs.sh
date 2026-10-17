@@ -245,4 +245,25 @@ assert_file "$mine" 'a file the manifest says this repo wrote is never retired'
 fs_retire_shadows k9s "$sandbox/does/not/exist" 2>/dev/null
 assert_symlink "$HOME/.local/bin/k9s" 'a KEEP that is not installed retires nothing'
 
+t_section 'fs_needs_root: replacing a file is a write to its directory'
+
+# The live failure: a user-owned /usr/local/bin/virtctl in the root-owned
+# /usr/local/bin was judged writable, and `install` could not unlink it.
+if [ "$(id -u)" = 0 ]; then
+  t_skip 'running as root: every path is writable'
+else
+  ro="$sandbox/rootish"
+  mkdir -p "$ro"
+  printf 'x\n' >"$ro/virtctl"
+  chmod 0555 "$ro"
+  assert_ok 'a writable file in an unwritable directory needs root' fs_needs_root "$ro/virtctl"
+  assert_ok 'so does a new file there' fs_needs_root "$ro/new"
+  chmod 0755 "$ro"
+  assert_fail 'the same file in a writable directory does not' fs_needs_root "$ro/virtctl"
+  chmod 0444 "$ro/virtctl"
+  assert_ok 'an unwritable file in a writable directory still needs root' fs_needs_root "$ro/virtctl"
+  assert_fail 'a path under a missing directory is judged by its nearest existing parent' \
+    fs_needs_root "$sandbox/not/yet/there"
+fi
+
 t_summary

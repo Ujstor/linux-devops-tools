@@ -242,7 +242,7 @@ Decoded secrets go to the pager and nowhere else — never to a file, never to a
 | terraform-docs | rel | `iac` | dev | `TERRAFORM_DOCS_VERSION` |
 | tflint | rel | `iac` | dev | `TFLINT_VERSION` |
 | bao (OpenBao) | deb | `iac` | dev | `OPENBAO_VERSION`. The package is `openbao`, the binary is `bao` |
-| ansible, ansible-lint | uv | `iac` | dev | installed `--with kubernetes --with netaddr --with jmespath`, or half the playbooks fail at runtime |
+| ansible, ansible-lint | uv | `iac` | dev | installed `--with kubernetes --with netaddr --with jmespath`, or half the playbooks fail at runtime, and `--with-executables-from ansible-core` — the `ansible` metapackage's only command is `ansible-community`; `ansible-playbook` and the rest are ansible-core's |
 | checkov, yamllint, detect-secrets, pre-commit | uv | `lang-python`, `repo-dev` | dev | |
 | mkdocs (+ mkdocs-material, mike) | uv `mkdocs --with mkdocs-material --with mike` | `iac` | dev | the theme ships no console script, so `mkdocs` is the tool and the theme is a `--with`; `mike` is an mkdocs plugin and needs the same venv. `iac` **owns** it; `lang-python` installs the same spec only when `mkdocs` is absent, so a profile without `iac` still gets one |
 | black | uv | `lang-python` | full | |
@@ -326,7 +326,9 @@ row of `config/packages.map` says which.
 | mise | script | `MISE_VERSION` | `lang-node` | opt | only when `NODE_MANAGER=mise` |
 
 Python CLIs are **always** `uv tool install`. Nothing in this repository moves, renames or deletes
-`EXTERNALLY-MANAGED`, and `pip --user` is not used anywhere.
+`EXTERNALLY-MANAGED`, and `pip --user` is not used anywhere. An old `pip install --user` script in
+`~/.local/bin` that uv refuses to overwrite (`Executable already exists`) is moved to `retired-bin`
+and the tool installed again — see [migration §5.6](migration.md#56-two-of-everything-on-path).
 
 ## AI agents (module `ai`)
 

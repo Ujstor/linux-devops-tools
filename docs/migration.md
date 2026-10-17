@@ -292,6 +292,14 @@ directories is moved — never deleted — to `~/.local/state/devops-env/retired
 | `~/go/bin/k9s` | `~/.local/state/devops-env/retired-bin/go_bin/k9s` |
 | `~/.cargo/bin/eza` | `~/.local/state/devops-env/retired-bin/.cargo_bin/eza` |
 
+The same goes for an old `pip install --user` script in `~/.local/bin` — `ansible-playbook`, `checkov`,
+`yamllint`, `mkdocs` — that `uv tool install` refuses to overwrite: it is moved to
+`retired-bin/.local_bin/` and the tool installed again. The pip packages themselves stay in
+`~/.local/lib/python3.*`; `python3 -m pip uninstall --break-system-packages -y <package>` drops them.
+
+A shell that is already open still remembers the old path (`bash: ~/go/bin/k9s: No such file or
+directory`) — run `hash -r` in it, or open a new one. The summary says so whenever it retired something.
+
 Undo one with a single `mv` back. `DEVENV_KEEP_SHADOWS=1` keeps them all and only reports. Left alone
 in every case: a copy Homebrew, nvm or the distribution owns (the doctor still names it — remove it
 with that tool), a file this repository wrote itself, and a newer copy next to a distribution package

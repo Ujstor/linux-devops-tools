@@ -110,14 +110,14 @@ none of them is safe to imply:
 | `DEVENV_INSTALL_MYBASH=0` | `shell` | the older spelling of `DEVENV_EXTREPO_MYBASH=0`: leave `mybash` alone |
 | `DEVENV_EXTREPO_POST=0` | `shell`, `editors`, `root-configs` | sync and symlink the external config repos, but do not run their own installers |
 | `DEVENV_ROOT_CONFIGS=0` | `root-configs` | do not give root the same nvim/tmux/bash configuration |
-| `DEVENV_UV_FORCE=1` | `lang-python` | let `uv tool install --force` replace an existing shim |
+| `DEVENV_UV_FORCE=1` | `lang-python` | let `uv tool install --force` overwrite an existing shim, instead of moving it to `retired-bin` first |
 | `DEVENV_NODE_MANAGER=mise` | `lang-node` | use mise instead of nvm |
 | `DEVENV_DOCTOR_STRICT=1` | `doctor` | exit non-zero on a FAIL instead of only reporting |
 | `DEVENV_PRUNE=1` (`--prune`) | `shell` | remove `~/.bashrc.d` fragments this repo no longer ships — marker-carrying files only, never `90-local.sh` |
 | `DEVENV_ADOPT_BASHRC=1` (`--adopt-bashrc`) | `shell` | replace a symlinked `~/.bashrc` with a real file, after a backup |
 | `--starship MODE` | `shell` | `upstream` \| `overlay` \| `adopt` \| `print` (default `print`) |
 | `DEVENV_BACKUP_KEEP` | `lib/fs.sh` | how many timestamped backups to keep per file (default 5) |
-| `DEVENV_KEEP_SHADOWS=1` | `lib/fs.sh` | keep an old copy of a pinned tool in `~/bin`, `~/.local/bin`, `~/.cargo/bin` or `~/go/bin` and only report it, instead of moving it to `retired-bin` — see [migration §5.6](migration.md#56-two-of-everything-on-path) |
+| `DEVENV_KEEP_SHADOWS=1` | `lib/fs.sh` | keep an old copy of a pinned tool in `~/bin`, `~/.local/bin`, `~/.cargo/bin` or `~/go/bin`, and a `pip --user` script uv refuses, and only report it, instead of moving it to `retired-bin` — see [migration §5.6](migration.md#56-two-of-everything-on-path) |
 | `NO_COLOR` / `DEVENV_NO_COLOR` | all | disable colour. Colour is off automatically when stderr is not a terminal |
 
 ## `~/.config/devops-env/`

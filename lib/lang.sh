@@ -184,17 +184,38 @@ uv_install() {
   return 0
 }
 
-# uv_tool_install SPEC [--with PKG]…
+# uv_tool_install SPEC [--expect-bin CMD] [UV OPTIONS…]
 #   Installs a Python CLI into its own venv. Idempotent via `uv tool list`.
 #   K34, the single highest-risk detail of the Python migration: extra `--with`
 #   packages must be named, because Ansible COLLECTIONS import them
 #   (`kubernetes.core` needs `kubernetes`, `ansible.utils` needs `netaddr`).
 #   `pip --user` satisfied that by accident, one shared prefix; per-tool venvs do not:
 #       uv_tool_install ansible --with kubernetes --with netaddr --with jmespath
+#   --expect-bin CMD: an installed tool whose `uv tool list` entry lacks CMD is not
+#   "already installed" — uv installs entry points only from the package it was
+#   asked for, so `uv tool install ansible` gave ansible-community and no
+#   ansible-playbook; asked again with the right options, uv rebuilds it in place.
+#   An entry point that uv refuses because a file it does not own holds the name
+#   — a `pip install --user` script in ~/.local/bin — is retired (fs_retire_file)
+#   and the install tried once more. DEVENV_KEEP_SHADOWS=1 keeps those files, and
+#   the install then fails as uv reported.
 #   Honours --dry-run. Returns 0 when installed or already present.
 uv_tool_install() {
   local spec=${1:?uv_tool_install: SPEC required}
   shift
+  local expect='' args=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --expect-bin)
+        expect=$2
+        shift 2
+        ;;
+      *)
+        args+=("$1")
+        shift
+        ;;
+    esac
+  done
   have uv || {
     log_skip "uv is not installed — cannot install $spec"
     return 0
@@ -202,15 +223,70 @@ uv_tool_install() {
   local name=${spec%%[<>=@\[]*}
   name=${name##*/}
   if uv tool list 2>/dev/null | awk '{print $1}' | grep -qx -- "$name"; then
-    log_skip "uv tool '$name' is already installed"
-    return 0
+    if [ -z "$expect" ] || _uv_tool_has_bin "$name" "$expect"; then
+      log_skip "uv tool '$name' is already installed"
+      return 0
+    fi
+    log_info "uv tool '$name' has no $expect — installing it again with its entry points"
   fi
-  log_info "uv tool install $spec $*"
-  run uv tool install "$spec" "$@" || {
+  log_info "uv tool install $spec ${args[*]}"
+  local out rc=0
+  out=$(run uv tool install "$spec" ${args[@]+"${args[@]}"} 2>&1) || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  # uv names its conflicts one package at a time: with --with-executables-from it
+  # refuses ansible-core's entry points first and the metapackage's
+  # ansible-community only on the next attempt. So retry while each attempt
+  # retires something new — three is one more than any tool here needs.
+  local attempt=1
+  while [ "$rc" != 0 ] && [ "$attempt" -lt 3 ] && _uv_retire_conflicts "$out"; do
+    attempt=$((attempt + 1))
+    log_info "uv tool install $spec — again, with the old entry points out of the way"
+    rc=0
+    out=$(run uv tool install "$spec" ${args[@]+"${args[@]}"} 2>&1) || rc=$?
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+  done
+  if [ "$rc" != 0 ]; then
     log_error "uv tool install $spec failed"
     return 1
-  }
+  fi
   changed "uv tool $name"
+  return 0
+}
+
+# _uv_tool_has_bin NAME CMD   (private)
+#   0 when `uv tool list` shows CMD among tool NAME's entry points:
+#       ansible v14.5.0
+#       - ansible-community
+_uv_tool_has_bin() {
+  uv tool list 2>/dev/null | awk -v t="$1" -v b="$2" '
+    /^[^ -]/ { cur = $1; next }
+    cur == t && $1 == "-" && $2 == b { found = 1 }
+    END { exit !found }'
+}
+
+# _uv_retire_conflicts UV_OUTPUT   (private)
+#   uv refuses an entry point a file it does not own already holds, and names it:
+#       error: Executable already exists: ansible-playbook (use `--force` to overwrite)
+#       error: Executables already exist: checkov, checkov.cmd (use `--force` to overwrite)
+#   It rolls the whole tool back. Each named file in uv's bin directory that is
+#   not a uv shim is retired. Returns 0 when every one was moved and a retry can
+#   succeed, 1 when uv's output names nothing or a file stayed.
+_uv_retire_conflicts() {
+  local line names n f real
+  local bindir=${UV_TOOL_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}
+  local tools=${UV_TOOL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools}
+  line=$(printf '%s\n' "$1" | grep -oE 'Executables? already exists?: .* \(use' | head -n1) || return 1
+  names=${line#*: }
+  names=${names% (use}
+  [ -n "$names" ] || return 1
+  # shellcheck disable=SC2086  # deliberate word-splitting: uv's comma list
+  for n in ${names//,/ }; do
+    f=$bindir/$n
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    real=$(readlink -f -- "$f" 2>/dev/null) || real=$f
+    case $real in "$tools"/*) return 1 ;; esac
+    fs_retire_file "$f" "uv installs its own $n" || return 1
+  done
   return 0
 }
 
