@@ -42,6 +42,7 @@ _DEVENV_REPO=1
 
 KEYRING_DIR=${KEYRING_DIR:-/etc/apt/keyrings}
 SOURCES_DIR=${SOURCES_DIR:-/etc/apt/sources.list.d}
+PREFERENCES_DIR=${PREFERENCES_DIR:-/etc/apt/preferences.d}
 # The rpm families. /etc/pki/rpm-gpg is where EL and Fedora keep vendor keys; Leap
 # has no such directory and gets one, because one place per machine beats a
 # second convention for the same file.
@@ -952,10 +953,15 @@ _repo_azure_cli_deb() {
 
 # repo_ensure_google_cloud_cli
 #   debian  packages.cloud.google.com/apt, suite literally `cloud-sdk`, so one
-#           identical line on Debian and Ubuntu with no codename logic.
+#           identical line on Debian and Ubuntu with no codename logic. That suite
+#           also carries Google's own kubectl, versioned 1:589.0.0 — the epoch
+#           outranks pkgs.k8s.io's 1.34.x, and the second run of the container
+#           matrix swapped the fleet's kubectl for it. An apt preferences file
+#           (_repo_google_cloud_pin) is the deb822 form of the rpm side's
+#           includepkgs: only google-cloud-cli* may come from Google.
 #   redhat  packages.cloud.google.com/yum/repos/cloud-sdk-el<major>-<arch>/ —
 #           el8, el9 and el10, x86_64 and aarch64, all published (verified
-#           2026-10-17). Fedora has no tree of its own and takes el10, the newest.
+#           2026-10-17). Fedora -> 78 (below).
 #           repo_gpgcheck is OFF, as in Google's own .repo: repomd.xml.asc is
 #           signed by 35BAA0B3…DC6315A3, which rpm-package-key.gpg does not hold
 #           (verified 2026-10-17), so dnf would refuse every metadata refresh.
@@ -968,11 +974,18 @@ repo_ensure_google_cloud_cli() {
       local key
       key=$(repo_key google-cloud "https://packages.cloud.google.com/apt/doc/apt-key.gpg" asc \
         --sha256 "${GOOGLE_CLOUD_KEY_SHA256:-}") || return 1
+      _repo_google_cloud_pin || return 1
       repo_add google-cloud-cli "https://packages.cloud.google.com/apt" cloud-sdk main "$key"
       ;;
     redhat)
       local el=${OS_VERSION_MAJOR:-} uri key
-      if [ "${OS_DISTRO:-}" = fedora ]; then el=10; fi
+      # Google builds for EL only. Fedora 44's rpm refuses the el10 package's
+      # signature even with Google's key imported ("Import of the key didn't
+      # help, wrong key?", container matrix 2026-10-17), so Fedora is a skip.
+      if [ "${OS_DISTRO:-}" = fedora ]; then
+        log_skip "google-cloud-cli: Google builds no Fedora package, and Fedora rejects the signature of its EL one"
+        return 78
+      fi
       uri="https://packages.cloud.google.com/yum/repos/cloud-sdk-el${el}-${OS_ARCH_RPM:-}"
       repo_rpm_published "$uri" || {
         log_warn "packages.cloud.google.com publishes no cloud-sdk-el${el:-?}-${OS_ARCH_RPM:-?} repository"
@@ -987,6 +1000,27 @@ repo_ensure_google_cloud_cli() {
       return 78
       ;;
   esac
+}
+
+# _repo_google_cloud_pin   (private)
+#   Writes $PREFERENCES_DIR/google-cloud-cli: every package from Google's origin
+#   at priority -1 (never installed) except google-cloud-cli and its components
+#   (google-cloud-cli-gke-gcloud-auth-plugin, …). apt takes the first record that
+#   matches a package, so the narrow record comes first. Verified in ubuntu:24.04:
+#   kubectl's candidate goes from 1:589.0.0-0 back to 1.34.12-1.1.
+_repo_google_cloud_pin() {
+  ensure_dir "$PREFERENCES_DIR" || return 1
+  write_if_changed "$PREFERENCES_DIR/google-cloud-cli" 0644 <<'PIN'
+# Managed by linux-devops-tools. packages.cloud.google.com also publishes kubectl
+# (and more) at epoch 1:, which would outrank pkgs.k8s.io. Only gcloud comes from it.
+Package: google-cloud-cli google-cloud-cli-*
+Pin: origin "packages.cloud.google.com"
+Pin-Priority: 500
+
+Package: *
+Pin: origin "packages.cloud.google.com"
+Pin-Priority: -1
+PIN
 }
 
 # repo_ensure_trivy

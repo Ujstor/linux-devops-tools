@@ -274,7 +274,7 @@ package → a verified release artifact → `uv tool install` → a skip with th
 | packer (`INSTALL_PACKER=1`) | HashiCorp deb | HashiCorp `.repo` | **skip** — no repository, no package | distro `packer` |
 | gh | `cli.github.com` deb | `cli.github.com` rpm `.repo` | the same rpm tree | distro `github-cli` |
 | azure-cli | `packages.microsoft.com` deb, else uv | EL 9/10: `packages.microsoft.com/rhel/<major>/prod`, `includepkgs=azure-cli`. Fedora: uv | uv | uv |
-| google-cloud-cli | `packages.cloud.google.com` deb | `cloud-sdk-el<major>-<arch>` `.repo` (Fedora: `el10`), `includepkgs=google-cloud-cli`, `repo_gpgcheck=0` as Google's own | **skip** — Google publishes none | **skip** — Google publishes none |
+| google-cloud-cli | `packages.cloud.google.com` deb, pinned by `/etc/apt/preferences.d/google-cloud-cli` so nothing but `google-cloud-cli*` comes from it — the suite also carries a `kubectl` at epoch `1:` that would replace pkgs.k8s.io's | EL: `cloud-sdk-el<major>-<arch>` `.repo`, `includepkgs=google-cloud-cli`, `repo_gpgcheck=0` as Google's own. Fedora: **skip** — no Fedora build, and Fedora rejects the EL one's signature | **skip** — Google publishes none | **skip** — Google publishes none |
 | trivy | `get.trivy.dev` deb | `get.trivy.dev` rpm `.repo` | the same rpm tree | distro `trivy` |
 
 Where Microsoft publishes nothing (Fedora, Leap, Arch), an `azure-cli` a distribution package

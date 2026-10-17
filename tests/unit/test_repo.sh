@@ -220,6 +220,7 @@ assert_status 78 'suse: google-cloud-cli (Google publishes none)' repo_ensure_go
 
 OS_FAMILY=redhat OS_PKG_MGR=dnf OS_DISTRO=fedora OS_VERSION_MAJOR=44
 assert_status 78 'Fedora: Microsoft builds no azure-cli' repo_ensure_azure_cli
+assert_status 78 'Fedora: Google builds no gcloud, and rejects the EL one' repo_ensure_google_cloud_cli
 assert_eq '' "$(cat "$SUDO_LOG")" 'none of those touched the network'
 
 t_section 'Debian: the docker source names the component Docker actually has'
@@ -235,5 +236,19 @@ assert_contains "$(cat "$SOURCES_DIR/docker.sources" 2>/dev/null)" 'Components: 
   'Components: stable'
 assert_contains "$(cat "$SOURCES_DIR/docker.sources" 2>/dev/null)" \
   'URIs: https://download.docker.com/linux/debian' 'the deb822 source is otherwise unchanged'
+
+t_section 'Debian: only google-cloud-cli may come from Google'
+
+# The cloud-sdk suite also ships kubectl at 1:589.0.0, and the epoch outranked
+# pkgs.k8s.io: the container matrix's second run replaced the fleet's kubectl.
+PREFERENCES_DIR="$T_SANDBOX/preferences.d"
+repo_key() { printf '/etc/apt/keyrings/google-cloud.asc\n'; }
+repo_ensure_google_cloud_cli 2>/dev/null
+pin=$(cat "$PREFERENCES_DIR/google-cloud-cli" 2>/dev/null)
+assert_contains "$(cat "$SOURCES_DIR/google-cloud-cli.sources" 2>/dev/null)" 'Suites: cloud-sdk' \
+  'the source is the cloud-sdk suite'
+assert_contains "$pin" 'Pin-Priority: -1' 'everything else from Google is pinned out'
+assert_eq 'Package: google-cloud-cli google-cloud-cli-*' "$(grep -m1 '^Package:' <<<"$pin")" \
+  'and the google-cloud-cli record comes first — apt takes the first match'
 
 t_summary
