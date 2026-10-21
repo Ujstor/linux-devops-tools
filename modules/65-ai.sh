@@ -142,6 +142,56 @@ install_opencode() {
   return 0
 }
 
+# install_opencode_cli_config
+#   config/opencode/cli.json holds the fleet's opencode TUI defaults:
+#   "mouse": false, so a drag reaches tmux-yank and the wheel reaches tmux's
+#   OpenCode scroll bindings instead of OpenCode's own mouse capture, and
+#   session.permissions "autoaccept", so no session stops on a permission
+#   prompt (configured deny rules and policies still apply).
+#   Absent -> written verbatim. Present -> OpenCode rewrites this file itself
+#   (its settings dialog), so only the keys shipped here are merged in with jq,
+#   and only when one differs. DEVENV_KEEP_LOCAL=1 leaves an existing file
+#   alone. A file jq cannot parse is reported, never rewritten. Always returns 0.
+install_opencode_cli_config() {
+  local src="$DEVENV_HOME/config/opencode/cli.json" dest merged
+  dest="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/cli.json"
+  [ -f "$src" ] || {
+    log_warn "$src is missing from this checkout"
+    return 0
+  }
+
+  if [ ! -f "$dest" ]; then
+    ensure_dir "${dest%/*}" 0755 || return 0
+    write_if_changed "$dest" 0644 <"$src" || log_warn "could not write $dest"
+    return 0
+  fi
+
+  if [ "${DEVENV_KEEP_LOCAL:-0}" = 1 ]; then
+    log_skip "DEVENV_KEEP_LOCAL=1 — leaving $dest exactly as it is"
+    return 0
+  fi
+  if ! have jq; then
+    log_warn "jq is not installed — cannot merge the shipped settings into $dest"
+    log_warn "  merge $src into it by hand"
+    return 0
+  fi
+
+  if jq -e --slurpfile want "$src" '. == (. * ($want[0] | del(."$schema")))' \
+    "$dest" >/dev/null 2>&1; then
+    log_debug "$dest already carries every setting this repo ships"
+    return 0
+  fi
+  merged=$(devenv_tmpfile) || return 0
+  if ! jq --slurpfile want "$src" '. * ($want[0] | del(."$schema"))' "$dest" >"$merged" 2>/dev/null \
+    || [ ! -s "$merged" ]; then
+    log_warn "$dest is not JSON that jq can read — leaving it alone"
+    log_warn "  merge $src into it by hand"
+    return 0
+  fi
+  write_if_changed "$dest" 0644 <"$merged" || log_warn "could not write $dest"
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # The opt-in agents
 # ---------------------------------------------------------------------------
@@ -180,6 +230,7 @@ module_main() {
   install_claude || failed+=("Claude Code")
   report_npm_claude
   install_opencode || failed+=(opencode)
+  install_opencode_cli_config
   install_agents
 
   # Both native installers put their binary somewhere the PATH this process

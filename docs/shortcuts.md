@@ -225,9 +225,13 @@ Loaded from `~/.bashrc.d/` — open a new shell (`exec bash -l`) after an instal
 | copy mode `v` … `y` | select, then copy through `clip` |
 | prefix `P` | paste from `clip-paste` |
 | prefix `\|` · prefix `-` | split side by side · split top and bottom (minimal config) |
+| prefix `[` in an OpenCode pane | OC-SCROLL: `C-f`/`C-b` `C-d`/`C-u` `j`/`k` `g`/`G` scroll OpenCode's chat, `v` copy mode, `p` paste, `q` leave (tmux-config) |
 
 The `y` / `P` clipboard keys need one line in `~/.tmux.conf`, which this repository never edits:
 `source-file ~/.config/devops-env/tmux/devenv-clipboard.conf`. The minimal config has them built in.
+
+OC-SCROLL needs OpenCode's own mouse capture off, so drags and the wheel reach tmux: the `ai` module
+installs `~/.config/opencode/cli.json` with `"mouse": false` (merged into an existing file).
 
 tmux-config's own bindings and [nvim-config](https://github.com/Ujstor/nvim-config)'s keymaps live in
 those repositories' READMEs — they are their keys, not this one's.

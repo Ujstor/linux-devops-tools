@@ -346,6 +346,14 @@ updater (`claude update`, `opencode upgrade`), and this repository never runs ei
 installed through npm. A failed install of either fails the `ai` module; the other is still
 attempted.
 
+opencode's CLI settings come from `config/opencode/cli.json`: `"mouse": false`, so drags and the
+mouse wheel reach tmux-config's OpenCode scroll mode instead of opencode's own mouse capture, and
+`session.permissions: "autoaccept"`, so a session never stops on a permission prompt (configured
+`deny` rules and policies still apply). A
+missing `~/.config/opencode/cli.json` is written as shipped; an existing one only gets the shipped
+keys merged in with jq (the rest, and anything opencode wrote itself, stays). `DEVENV_KEEP_LOCAL=1`
+leaves it alone.
+
 ## Media, WSL, private, personal
 
 | tool | module | profile | note |
